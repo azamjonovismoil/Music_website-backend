@@ -1,0 +1,97 @@
+require('dotenv').config()
+const express = require('express')
+const mongoose = require('mongoose')
+const cors = require('cors')
+const cookieParser = require('cookie-parser')
+const path = require('path')
+const session = require('express-session')
+const passport = require('./utils/googleAuth')
+const { verifyMailConnection } = require('./utils/sendEmail')
+
+const { router: authRouter } = require('./routes/auth')
+const musicRouter = require('./routes/music')
+const playlistsRouter = require('./routes/playlists')
+
+const app = express()
+const PORT = process.env.PORT || 7139
+
+const allowedOrigins = [
+  process.env.CLIENT_URL,
+  'http://localhost:5173',
+  'http://localhost:7777',
+].filter(Boolean)
+
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true)
+    if (allowedOrigins.includes(origin)) return callback(null, true)
+    return callback(new Error(`CORS blocked for origin: ${origin}`))
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}))
+
+app.use(express.json({ limit: '50mb' }))
+app.use(express.urlencoded({ extended: true, limit: '50mb' }))
+app.use(cookieParser())
+
+app.use(session({
+  secret: process.env.JWT_SECRET || 'fallback_secret',
+  resave: false,
+  saveUninitialized: false,
+}))
+
+app.use(passport.initialize())
+app.use(passport.session())
+
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
+
+app.use('/api/auth', authRouter)
+app.use('/api/music', musicRouter)
+app.use('/api/playlists', playlistsRouter)
+
+app.get('/api/health', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+  })
+})
+
+app.use((req, res) => {
+  res.status(404).json({
+    message: `Route ${req.method} ${req.path} not found`,
+  })
+})
+
+app.use((err, req, res, next) => {
+  console.error('Server error:', err.message)
+  res.status(500).json({
+    message: err.message || 'Internal server error',
+  })
+})
+
+async function startServer() {
+  try {
+    const MONGODB_URI = process.env.MONGODB_URI
+    if (!MONGODB_URI) {
+      throw new Error('MONGODB_URI is missing in .env')
+    }
+
+    await mongoose.connect(MONGODB_URI)
+    console.log('MongoDB connected')
+
+    await verifyMailConnection()
+
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`)
+    })
+  } catch (err) {
+    console.error('MongoDB connection failed:', err.message)
+    process.exit(1)
+  }
+}
+
+startServer()
+
+module.exports = app

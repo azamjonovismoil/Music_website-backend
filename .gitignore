@@ -1,0 +1,12 @@
+node_modules/
+.venv/
+__pycache__/
+.env
+*.log
+.DS_Store
+Thumbs.db
+bin/
+*.exe
+*.dll
+dist/
+build/
