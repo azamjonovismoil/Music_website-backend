@@ -14,8 +14,14 @@ const {
 const router = express.Router()
 
 const JWT_SECRET = process.env.JWT_SECRET
+const CLIENT_URL = process.env.CLIENT_URL
+
 if (!JWT_SECRET) {
   throw new Error('JWT_SECRET is missing in environment variables')
+}
+
+if (!CLIENT_URL) {
+  throw new Error('CLIENT_URL is missing in environment variables')
 }
 
 const COOKIE_OPTIONS = {
@@ -39,7 +45,7 @@ const signToken = (user) => {
 }
 
 const sanitizeUser = (user) => {
-  const obj = user.toObject ? user.toObject() : user
+  const obj = user.toObject ? user.toObject() : { ...user }
   delete obj.password
   delete obj.emailVerificationCode
   delete obj.emailVerificationExpires
@@ -160,25 +166,27 @@ router.post('/login', async (req, res) => {
   }
 })
 
-router.get('/google',
+router.get(
+  '/google',
   passport.authenticate('google', {
     scope: ['profile', 'email'],
     session: false,
   })
 )
 
-router.get('/google/callback',
+router.get(
+  '/google/callback',
   passport.authenticate('google', {
-    failureRedirect: `${process.env.CLIENT_URL}/login`,
+    failureRedirect: `${CLIENT_URL}/login`,
     session: false,
   }),
   async (req, res) => {
     try {
       const token = signToken(req.user)
       res.cookie(COOKIE_NAME, token, COOKIE_OPTIONS)
-      return res.redirect(`${process.env.CLIENT_URL}/`)
+      return res.redirect(`${CLIENT_URL}/`)
     } catch (err) {
-      return res.redirect(`${process.env.CLIENT_URL}/login`)
+      return res.redirect(`${CLIENT_URL}/login`)
     }
   }
 )
@@ -374,7 +382,7 @@ router.put('/profile/:id', authMiddleware, async (req, res) => {
     const updates = {}
 
     if (name !== undefined) {
-      if (name.trim().length < 2) {
+      if (!name.trim() || name.trim().length < 2) {
         return res.status(400).json({ message: 'Name must be at least 2 characters' })
       }
       updates.name = name.trim()

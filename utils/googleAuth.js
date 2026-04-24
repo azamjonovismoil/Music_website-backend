@@ -2,12 +2,30 @@ const passport = require('passport')
 const GoogleStrategy = require('passport-google-oauth20').Strategy
 const User = require('../models/User')
 
+const {
+  GOOGLE_CLIENT_ID,
+  GOOGLE_CLIENT_SECRET,
+  GOOGLE_CALLBACK_URL,
+} = process.env
+
+if (!GOOGLE_CLIENT_ID) {
+  throw new Error('GOOGLE_CLIENT_ID is missing')
+}
+
+if (!GOOGLE_CLIENT_SECRET) {
+  throw new Error('GOOGLE_CLIENT_SECRET is missing')
+}
+
+if (!GOOGLE_CALLBACK_URL) {
+  throw new Error('GOOGLE_CALLBACK_URL is missing')
+}
+
 passport.use(
   new GoogleStrategy(
     {
-      clientID: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: process.env.GOOGLE_CALLBACK_URL,
+      clientID: GOOGLE_CLIENT_ID,
+      clientSecret: GOOGLE_CLIENT_SECRET,
+      callbackURL: GOOGLE_CALLBACK_URL,
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
@@ -32,6 +50,7 @@ passport.use(
             googleId,
             isEmailVerified: true,
           })
+
           return done(null, user)
         }
 
@@ -41,7 +60,10 @@ passport.use(
 
         user.authProvider = 'google'
         user.isEmailVerified = true
-        if (!user.name && name) user.name = name
+
+        if (!user.name && name) {
+          user.name = name
+        }
 
         await user.save()
 
@@ -53,7 +75,10 @@ passport.use(
   )
 )
 
-passport.serializeUser((user, done) => done(null, user.id))
+passport.serializeUser((user, done) => {
+  done(null, user.id)
+})
+
 passport.deserializeUser(async (id, done) => {
   try {
     const user = await User.findById(id)
@@ -63,7 +88,7 @@ passport.deserializeUser(async (id, done) => {
   }
 })
 
-console.log('GOOGLE_CLIENT_ID:', process.env.GOOGLE_CLIENT_ID)
-console.log('GOOGLE_CALLBACK_URL:', process.env.GOOGLE_CALLBACK_URL)
+console.log('[Google Auth] Ready')
+console.log('[Google Auth] Callback URL:', GOOGLE_CALLBACK_URL)
 
 module.exports = passport
