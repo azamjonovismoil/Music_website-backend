@@ -8,7 +8,7 @@ const path = require('path')
 const passport = require('./utils/googleAuth')
 const { verifyMailConnection } = require('./utils/sendEmail')
 
-const { router: authRouter } = require('./routes/auth')
+const authRouter = require('./routes/auth')
 const musicRouter = require('./routes/music')
 const playlistsRouter = require('./routes/playlists')
 
@@ -21,16 +21,18 @@ const allowedOrigins = [
   'http://localhost:7777',
 ].filter(Boolean)
 
-app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true)
-    if (allowedOrigins.includes(origin)) return callback(null, true)
-    return callback(new Error(`CORS blocked for origin: ${origin}`))
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}))
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true)
+      if (allowedOrigins.includes(origin)) return callback(null, true)
+      return callback(new Error(`CORS blocked for origin: ${origin}`))
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+)
 
 app.use(express.json({ limit: '50mb' }))
 app.use(express.urlencoded({ extended: true, limit: '50mb' }))
@@ -78,7 +80,6 @@ async function startServer() {
     await mongoose.connect(MONGODB_URI)
     console.log('MongoDB connected')
 
-    // verifyMailConnection ni try/catch ichiga oling
     try {
       await verifyMailConnection()
     } catch (mailErr) {
@@ -89,10 +90,11 @@ async function startServer() {
       console.log(`Server running on port ${PORT}`)
     })
   } catch (err) {
-    console.error('Startup error:', err.message) // <-- to'liq xatoni ko'rish uchun
+    console.error('Startup error:', err.message)
     process.exit(1)
   }
 }
+
 startServer()
 
 module.exports = app

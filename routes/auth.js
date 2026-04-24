@@ -1,5 +1,4 @@
 const express = require('express')
-const router = express.Router()
 const jwt = require('jsonwebtoken')
 const passport = require('../utils/googleAuth')
 const User = require('../models/User')
@@ -11,31 +10,49 @@ const {
 } = require('../utils/emailTemplates')
 const { authMiddleware, COOKIE_NAME } = require('../middleware/auth')
 
+const router = express.Router()
+
+const { JWT_SECRET, CLIENT_URL, NODE_ENV } = process.env
+
+if (!JWT_SECRET) {
+  throw new Error('JWT_SECRET is missing')
+}
+
+if (!CLIENT_URL) {
+  throw new Error('CLIENT_URL is missing')
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const generateCode = () => String(Math.floor(100000 + Math.random() * 900000))
 
 const signToken = (user) =>
   jwt.sign(
-    { id: user._id, email: user.email, isAdmin: user.isAdmin },
-    process.env.JWT_SECRET,
+    {
+      id: user._id,
+      email: user.email,
+      isAdmin: user.isAdmin,
+    },
+    JWT_SECRET,
     { expiresIn: '7d' }
   )
 
+const cookieOptions = {
+  httpOnly: true,
+  secure: NODE_ENV === 'production',
+  sameSite: NODE_ENV === 'production' ? 'none' : 'lax',
+  maxAge: 7 * 24 * 60 * 60 * 1000,
+}
+
 const setTokenCookie = (res, token) => {
-  res.cookie(COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-  })
+  res.cookie(COOKIE_NAME, token, cookieOptions)
 }
 
 const clearTokenCookie = (res) => {
   res.clearCookie(COOKIE_NAME, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    secure: NODE_ENV === 'production',
+    sameSite: NODE_ENV === 'production' ? 'none' : 'lax',
   })
 }
 
@@ -57,16 +74,24 @@ router.post('/register', async (req, res) => {
     const { name, email, password, bio } = req.body
 
     if (!name || !email || !password) {
-      return res.status(400).json({ message: 'Name, email and password are required' })
+      return res.status(400).json({
+        message: 'Name, email and password are required',
+      })
     }
 
     if (password.length < 6) {
-      return res.status(400).json({ message: 'Password must be at least 6 characters' })
+      return res.status(400).json({
+        message: 'Password must be at least 6 characters',
+      })
     }
 
-    const exists = await User.findOne({ email: email.toLowerCase() })
+    const normalizedEmail = email.toLowerCase().trim()
+
+    const exists = await User.findOne({ email: normalizedEmail })
     if (exists) {
-      return res.status(409).json({ message: 'Email already registered' })
+      return res.status(409).json({
+        message: 'Email already registered',
+      })
     }
 
     const code = generateCode()
@@ -74,7 +99,7 @@ router.post('/register', async (req, res) => {
 
     const user = await User.create({
       name: name.trim(),
-      email: email.toLowerCase().trim(),
+      email: normalizedEmail,
       password,
       bio: bio?.trim() || '',
       isAdmin: 0,
@@ -84,18 +109,23 @@ router.post('/register', async (req, res) => {
       isEmailVerified: false,
     })
 
-    await sendEmail({ to: user.email, ...verificationTemplate(user.name, code) })
+    await sendEmail({
+      to: user.email,
+      ...verificationTemplate(user.name, code),
+    })
 
     const token = signToken(user)
     setTokenCookie(res, token)
 
-    res.status(201).json({
+    return res.status(201).json({
       message: 'Registered successfully. Check your email for the verification code.',
       user: safeUser(user),
     })
   } catch (err) {
     console.error('[Register]', err)
-    res.status(500).json({ message: err.message || 'Server error' })
+    return res.status(500).json({
+      message: err.message || 'Server error',
+    })
   }
 })
 
@@ -106,21 +136,31 @@ router.post('/login', async (req, res) => {
     const { email, password } = req.body
 
     if (!email || !password) {
-      return res.status(400).json({ message: 'Email and password are required' })
+      return res.status(400).json({
+        message: 'Email and password are required',
+      })
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() }).select('+password')
+    const normalizedEmail = email.toLowerCase().trim()
+
+    const user = await User.findOne({ email: normalizedEmail }).select('+password')
     if (!user) {
-      return res.status(401).json({ message: 'Invalid credentials' })
+      return res.status(401).json({
+        message: 'Invalid credentials',
+      })
     }
 
     if (user.authProvider === 'google' && !user.password) {
-      return res.status(400).json({ message: 'This account uses Google sign-in. Please continue with Google.' })
+      return res.status(400).json({
+        message: 'This account uses Google sign-in. Please continue with Google.',
+      })
     }
 
     const valid = await user.comparePassword(password)
     if (!valid) {
-      return res.status(401).json({ message: 'Invalid credentials' })
+      return res.status(401).json({
+        message: 'Invalid credentials',
+      })
     }
 
     const token = signToken(user)
@@ -134,13 +174,15 @@ router.post('/login', async (req, res) => {
       })
     }
 
-    res.json({
+    return res.json({
       message: 'Login successful',
       user: safeUser(user),
     })
   } catch (err) {
     console.error('[Login]', err)
-    res.status(500).json({ message: err.message || 'Server error' })
+    return res.status(500).json({
+      message: err.message || 'Server error',
+    })
   }
 })
 
@@ -152,15 +194,22 @@ router.post('/verify-email', authMiddleware, async (req, res) => {
     const user = req.user
 
     if (user.isEmailVerified) {
-      return res.json({ message: 'Already verified', user: safeUser(user) })
+      return res.json({
+        message: 'Already verified',
+        user: safeUser(user),
+      })
     }
 
     if (!code || user.emailVerificationCode !== code) {
-      return res.status(400).json({ message: 'Invalid code' })
+      return res.status(400).json({
+        message: 'Invalid code',
+      })
     }
 
-    if (new Date() > user.emailVerificationExpires) {
-      return res.status(400).json({ message: 'Code expired. Please request a new one.' })
+    if (!user.emailVerificationExpires || new Date() > new Date(user.emailVerificationExpires)) {
+      return res.status(400).json({
+        message: 'Code expired. Please request a new one.',
+      })
     }
 
     user.isEmailVerified = true
@@ -168,21 +217,25 @@ router.post('/verify-email', authMiddleware, async (req, res) => {
     user.emailVerificationExpires = undefined
     await user.save()
 
-    // Send welcome email (don't fail if this errors)
-    sendEmail({ to: user.email, ...welcomeTemplate(user.name) }).catch((err) =>
+    sendEmail({
+      to: user.email,
+      ...welcomeTemplate(user.name),
+    }).catch((err) => {
       console.warn('[Welcome email]', err.message)
-    )
+    })
 
     const newToken = signToken(user)
     setTokenCookie(res, newToken)
 
-    res.json({
+    return res.json({
       message: 'Email verified successfully',
       user: safeUser(user),
     })
   } catch (err) {
     console.error('[VerifyEmail]', err)
-    res.status(500).json({ message: err.message || 'Server error' })
+    return res.status(500).json({
+      message: err.message || 'Server error',
+    })
   }
 })
 
@@ -193,7 +246,9 @@ router.post('/resend-verification', authMiddleware, async (req, res) => {
     const user = req.user
 
     if (user.isEmailVerified) {
-      return res.status(400).json({ message: 'Email already verified' })
+      return res.status(400).json({
+        message: 'Email already verified',
+      })
     }
 
     const code = generateCode()
@@ -201,12 +256,19 @@ router.post('/resend-verification', authMiddleware, async (req, res) => {
     user.emailVerificationExpires = new Date(Date.now() + 10 * 60 * 1000)
     await user.save()
 
-    await sendEmail({ to: user.email, ...verificationTemplate(user.name, code) })
+    await sendEmail({
+      to: user.email,
+      ...verificationTemplate(user.name, code),
+    })
 
-    res.json({ message: 'Verification code resent' })
+    return res.json({
+      message: 'Verification code resent',
+    })
   } catch (err) {
     console.error('[ResendVerification]', err)
-    res.status(500).json({ message: err.message || 'Server error' })
+    return res.status(500).json({
+      message: err.message || 'Server error',
+    })
   }
 })
 
@@ -217,14 +279,18 @@ router.post('/forgot-password', async (req, res) => {
     const { email } = req.body
 
     if (!email) {
-      return res.status(400).json({ message: 'Email is required' })
+      return res.status(400).json({
+        message: 'Email is required',
+      })
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() })
+    const normalizedEmail = email.toLowerCase().trim()
+    const user = await User.findOne({ email: normalizedEmail })
 
-    // Always return 200 to prevent email enumeration
     if (!user || user.authProvider === 'google') {
-      return res.json({ message: 'If that email exists, a reset code was sent' })
+      return res.json({
+        message: 'If that email exists, a reset code was sent',
+      })
     }
 
     const code = generateCode()
@@ -232,12 +298,19 @@ router.post('/forgot-password', async (req, res) => {
     user.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000)
     await user.save()
 
-    await sendEmail({ to: user.email, ...resetPasswordTemplate(user.name, code) })
+    await sendEmail({
+      to: user.email,
+      ...resetPasswordTemplate(user.name, code),
+    })
 
-    res.json({ message: 'Reset code sent to your email' })
+    return res.json({
+      message: 'Reset code sent to your email',
+    })
   } catch (err) {
     console.error('[ForgotPassword]', err)
-    res.status(500).json({ message: err.message || 'Server error' })
+    return res.status(500).json({
+      message: err.message || 'Server error',
+    })
   }
 })
 
@@ -248,24 +321,36 @@ router.post('/reset-password', async (req, res) => {
     const { email, code, newPassword } = req.body
 
     if (!email || !code || !newPassword) {
-      return res.status(400).json({ message: 'All fields are required' })
+      return res.status(400).json({
+        message: 'All fields are required',
+      })
     }
 
     if (newPassword.length < 6) {
-      return res.status(400).json({ message: 'Password must be at least 6 characters' })
+      return res.status(400).json({
+        message: 'Password must be at least 6 characters',
+      })
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() })
+    const normalizedEmail = email.toLowerCase().trim()
+    const user = await User.findOne({ email: normalizedEmail }).select('+password')
+
     if (!user) {
-      return res.status(404).json({ message: 'User not found' })
+      return res.status(404).json({
+        message: 'User not found',
+      })
     }
 
     if (!user.passwordResetCode || user.passwordResetCode !== code) {
-      return res.status(400).json({ message: 'Invalid reset code' })
+      return res.status(400).json({
+        message: 'Invalid reset code',
+      })
     }
 
-    if (new Date() > user.passwordResetExpires) {
-      return res.status(400).json({ message: 'Reset code expired' })
+    if (!user.passwordResetExpires || new Date() > new Date(user.passwordResetExpires)) {
+      return res.status(400).json({
+        message: 'Reset code expired',
+      })
     }
 
     user.password = newPassword
@@ -273,10 +358,14 @@ router.post('/reset-password', async (req, res) => {
     user.passwordResetExpires = undefined
     await user.save()
 
-    res.json({ message: 'Password reset successfully. You can now sign in.' })
+    return res.json({
+      message: 'Password reset successfully. You can now sign in.',
+    })
   } catch (err) {
     console.error('[ResetPassword]', err)
-    res.status(500).json({ message: err.message || 'Server error' })
+    return res.status(500).json({
+      message: err.message || 'Server error',
+    })
   }
 })
 
@@ -295,7 +384,7 @@ router.get(
 router.get(
   '/google/callback',
   passport.authenticate('google', {
-    failureRedirect: `${process.env.CLIENT_URL}/login?error=google_failed`,
+    failureRedirect: `${CLIENT_URL}/login?error=google_failed`,
     session: false,
   }),
   (req, res) => {
@@ -303,12 +392,11 @@ router.get(
       const token = signToken(req.user)
       setTokenCookie(res, token)
 
-      // Redirect to appropriate page
-      const redirect = req.user.isAdmin === 1 ? '/admin' : '/user'
-      res.redirect(`${process.env.CLIENT_URL}${redirect}`)
+      const redirectPath = req.user.isAdmin === 1 ? '/admin' : '/user'
+      return res.redirect(`${CLIENT_URL}${redirectPath}`)
     } catch (err) {
       console.error('[Google Callback]', err)
-      res.redirect(`${process.env.CLIENT_URL}/login?error=server`)
+      return res.redirect(`${CLIENT_URL}/login?error=server`)
     }
   }
 )
@@ -316,14 +404,18 @@ router.get(
 // ── Get current user ──────────────────────────────────────────────────────────
 
 router.get('/me', authMiddleware, (req, res) => {
-  res.json({ user: safeUser(req.user) })
+  return res.json({
+    user: safeUser(req.user),
+  })
 })
 
 // ── Logout ────────────────────────────────────────────────────────────────────
 
 router.post('/logout', (req, res) => {
   clearTokenCookie(res)
-  res.json({ message: 'Logged out successfully' })
+  return res.json({
+    message: 'Logged out successfully',
+  })
 })
 
-module.exports = { router }
+module.exports = router

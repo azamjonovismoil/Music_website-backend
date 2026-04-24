@@ -1,12 +1,16 @@
 const mongoose = require('mongoose')
 const bcrypt = require('bcryptjs')
 
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
 const userSchema = new mongoose.Schema(
   {
     name: {
       type: String,
       required: true,
       trim: true,
+      minlength: 2,
+      maxlength: 100,
     },
     email: {
       type: String,
@@ -14,6 +18,7 @@ const userSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
       trim: true,
+      match: [emailRegex, 'Please provide a valid email address'],
     },
     password: {
       type: String,
@@ -23,17 +28,20 @@ const userSchema = new mongoose.Schema(
     bio: {
       type: String,
       default: '',
+      maxlength: 500,
+      trim: true,
     },
     avatar: {
       type: String,
       default: '',
+      trim: true,
     },
     isAdmin: {
       type: Number,
-      default: 0, // 0 = user, 1 = admin
+      enum: [0, 1],
+      default: 0,
     },
 
-    // Auth provider
     authProvider: {
       type: String,
       enum: ['local', 'google'],
@@ -42,9 +50,11 @@ const userSchema = new mongoose.Schema(
     googleId: {
       type: String,
       default: '',
+      trim: true,
+      unique: true,
+      sparse: true,
     },
 
-    // Email verification
     isEmailVerified: {
       type: Boolean,
       default: false,
@@ -58,7 +68,6 @@ const userSchema = new mongoose.Schema(
       default: undefined,
     },
 
-    // Password reset
     passwordResetCode: {
       type: String,
       default: undefined,
@@ -68,7 +77,6 @@ const userSchema = new mongoose.Schema(
       default: undefined,
     },
 
-    // User library
     favourites: [
       {
         type: mongoose.Schema.Types.ObjectId,
@@ -82,20 +90,28 @@ const userSchema = new mongoose.Schema(
       },
     ],
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 )
 
-// Hash password before save (only if modified and not empty)
 userSchema.pre('save', async function (next) {
-  if (!this.isModified('password') || !this.password) return next()
-  this.password = await bcrypt.hash(this.password, 12)
-  next()
+  try {
+    if (!this.isModified('password')) return next()
+    if (!this.password || !this.password.trim()) return next()
+
+    this.password = await bcrypt.hash(this.password, 12)
+    return next()
+  } catch (err) {
+    return next(err)
+  }
 })
 
-// Compare password
-userSchema.methods.comparePassword = async function (candidate) {
+userSchema.methods.comparePassword = async function (candidatePassword) {
   if (!this.password) return false
-  return bcrypt.compare(candidate, this.password)
+  if (!candidatePassword) return false
+
+  return bcrypt.compare(candidatePassword, this.password)
 }
 
 module.exports = mongoose.model('User', userSchema)
