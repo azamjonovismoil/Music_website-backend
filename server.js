@@ -73,25 +73,26 @@ app.use((err, req, res, next) => {
 async function startServer() {
   try {
     const MONGODB_URI = process.env.MONGODB_URI
-
-    if (!MONGODB_URI) {
-      throw new Error('MONGODB_URI is missing')
-    }
+    if (!MONGODB_URI) throw new Error('MONGODB_URI is missing')
 
     await mongoose.connect(MONGODB_URI)
     console.log('MongoDB connected')
 
-    await verifyMailConnection()
+    // verifyMailConnection ni try/catch ichiga oling
+    try {
+      await verifyMailConnection()
+    } catch (mailErr) {
+      console.warn('Mail connection failed (non-fatal):', mailErr.message)
+    }
 
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`Server running on port ${PORT}`)
     })
   } catch (err) {
-    console.error('Startup error:', err)
+    console.error('Startup error:', err.message) // <-- to'liq xatoni ko'rish uchun
     process.exit(1)
   }
 }
-
 startServer()
 
 module.exports = app
