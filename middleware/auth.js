@@ -6,6 +6,7 @@ const COOKIE_NAME = process.env.COOKIE_NAME || 'mw_token'
 const authMiddleware = async (req, res, next) => {
   try {
     const JWT_SECRET = process.env.JWT_SECRET
+
     if (!JWT_SECRET) {
       return res.status(500).json({ message: 'JWT_SECRET is missing' })
     }
@@ -30,7 +31,7 @@ const authMiddleware = async (req, res, next) => {
     }
 
     req.user = user
-    next()
+    return next()
   } catch (err) {
     return res.status(401).json({ message: 'Session expired, please login again' })
   }
@@ -40,7 +41,8 @@ const adminMiddleware = (req, res, next) => {
   if (!req.user || Number(req.user.isAdmin) !== 1) {
     return res.status(403).json({ message: 'Admin access required' })
   }
-  next()
+
+  return next()
 }
 
 module.exports = {
