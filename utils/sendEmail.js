@@ -29,7 +29,7 @@ const verifyMailConnection = async () => {
 
 const sendEmail = async ({ to, subject, html, text }) => {
   if (!process.env.MAIL_USER || !process.env.MAIL_PASS) {
-    throw new Error('Mail credentials are missing in .env')
+    throw new Error('Mail credentials are missing')
   }
 
   const transporter = createTransporter()
@@ -46,4 +46,7 @@ const sendEmail = async ({ to, subject, html, text }) => {
   return info
 }
 
-module.exports = { sendEmail, verifyMailConnection }
+module.exports = {
+  sendEmail,
+  verifyMailConnection,
+}

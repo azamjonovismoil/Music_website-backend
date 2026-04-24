@@ -1,4 +1,5 @@
 require('dotenv').config()
+
 const express = require('express')
 const mongoose = require('mongoose')
 const cors = require('cors')
@@ -13,7 +14,7 @@ const musicRouter = require('./routes/music')
 const playlistsRouter = require('./routes/playlists')
 
 const app = express()
-const PORT = process.env.PORT || 7139
+const PORT = process.env.PORT || 5000
 
 const allowedOrigins = [
   process.env.CLIENT_URL,
@@ -40,6 +41,11 @@ app.use(session({
   secret: process.env.JWT_SECRET || 'fallback_secret',
   resave: false,
   saveUninitialized: false,
+  cookie: {
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+  },
 }))
 
 app.use(passport.initialize())
@@ -65,7 +71,7 @@ app.use((req, res) => {
 })
 
 app.use((err, req, res, next) => {
-  console.error('Server error:', err.message)
+  console.error('Server error:', err)
   res.status(500).json({
     message: err.message || 'Internal server error',
   })
@@ -74,8 +80,9 @@ app.use((err, req, res, next) => {
 async function startServer() {
   try {
     const MONGODB_URI = process.env.MONGODB_URI
+
     if (!MONGODB_URI) {
-      throw new Error('MONGODB_URI is missing in .env')
+      throw new Error('MONGODB_URI is missing')
     }
 
     await mongoose.connect(MONGODB_URI)
@@ -83,11 +90,11 @@ async function startServer() {
 
     await verifyMailConnection()
 
-    app.listen(PORT, () => {
+    app.listen(PORT, '0.0.0.0', () => {
       console.log(`Server running on port ${PORT}`)
     })
   } catch (err) {
-    console.error('MongoDB connection failed:', err.message)
+    console.error('Startup error:', err)
     process.exit(1)
   }
 }
