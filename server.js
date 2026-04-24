@@ -5,7 +5,6 @@ const mongoose = require('mongoose')
 const cors = require('cors')
 const cookieParser = require('cookie-parser')
 const path = require('path')
-const session = require('express-session')
 const passport = require('./utils/googleAuth')
 const { verifyMailConnection } = require('./utils/sendEmail')
 
@@ -37,25 +36,15 @@ app.use(express.json({ limit: '50mb' }))
 app.use(express.urlencoded({ extended: true, limit: '50mb' }))
 app.use(cookieParser())
 
-app.use(session({
-  secret: process.env.JWT_SECRET || 'fallback_secret',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env.NODE_ENV === 'production',
-    httpOnly: true,
-    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-  },
-}))
-
 app.use(passport.initialize())
-app.use(passport.session())
 
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
 
-app.use('/api/auth', authRouter)
-app.use('/api/music', musicRouter)
-app.use('/api/playlists', playlistsRouter)
+app.get('/', (req, res) => {
+  res.status(200).json({
+    message: 'Backend is running',
+  })
+})
 
 app.get('/api/health', (req, res) => {
   res.status(200).json({
@@ -63,6 +52,10 @@ app.get('/api/health', (req, res) => {
     timestamp: new Date().toISOString(),
   })
 })
+
+app.use('/api/auth', authRouter)
+app.use('/api/music', musicRouter)
+app.use('/api/playlists', playlistsRouter)
 
 app.use((req, res) => {
   res.status(404).json({
