@@ -30,7 +30,8 @@ app.use(
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
+    exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length', 'Content-Type'],
   })
 )
 
@@ -40,7 +41,8 @@ app.use(cookieParser())
 
 app.use(passport.initialize())
 
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')))
+// Faqat cover public bo'ladi
+app.use('/uploads/covers', express.static(path.join(__dirname, 'uploads/covers')))
 
 app.get('/', (req, res) => {
   res.status(200).json({

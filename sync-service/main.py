@@ -13,37 +13,37 @@ if str(CURRENT_DIR) not in sys.path:
 
 from sync_engine import generate_sync_from_lyrics
 
-app = FastAPI(title="Music Sync Service", version="2.0.0")
+app = FastAPI(title='Music Sync Service', version='3.0.0')
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=['*'],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=['*'],
+    allow_headers=['*'],
 )
 
-@app.get("/")
+@app.get('/')
 def root():
-    return {"status": "ok", "message": "Music Sync Service running"}
+    return {'status': 'ok', 'message': 'Music Sync Service running'}
 
-@app.get("/health")
+@app.get('/health')
 def health():
-    return {"status": "healthy"}
+    return {'status': 'healthy'}
 
-@app.post("/sync")
+@app.post('/sync')
 async def sync_lyrics_upload(
     audio: UploadFile = File(...),
     lyrics: str = Form(...),
-    model_size: str = Form("base"),
+    model_size: str = Form('base'),
 ):
-    suffix = os.path.splitext(audio.filename or "audio.mp3")[1] or ".mp3"
+    suffix = os.path.splitext(audio.filename or 'audio.mp3')[1] or '.mp3'
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     tmp_path = tmp.name
     tmp.close()
 
     try:
-        with open(tmp_path, "wb") as f:
+        with open(tmp_path, 'wb') as f:
             shutil.copyfileobj(audio.file, f)
 
         result = generate_sync_from_lyrics(
@@ -52,7 +52,7 @@ async def sync_lyrics_upload(
             model_size=model_size,
         )
 
-        return {"success": True, **result}
+        return {'success': True, **result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
@@ -62,14 +62,14 @@ async def sync_lyrics_upload(
             except Exception:
                 pass
 
-@app.post("/sync/from-lyrics")
+@app.post('/sync/from-lyrics')
 async def sync_from_path(
     audio_path: str = Form(...),
     lyrics: str = Form(...),
-    model_size: str = Form("base"),
+    model_size: str = Form('base'),
 ):
     if not os.path.exists(audio_path):
-        raise HTTPException(status_code=400, detail=f"Audio file not found: {audio_path}")
+        raise HTTPException(status_code=400, detail=f'Audio file not found: {audio_path}')
 
     try:
         result = generate_sync_from_lyrics(
@@ -77,6 +77,6 @@ async def sync_from_path(
             lyrics_text=lyrics,
             model_size=model_size,
         )
-        return {"success": True, **result}
+        return {'success': True, **result}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

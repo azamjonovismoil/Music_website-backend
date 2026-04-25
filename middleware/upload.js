@@ -6,7 +6,6 @@ const BASE_DIR = path.join(__dirname, '..')
 const coversDir = path.join(BASE_DIR, 'uploads', 'covers')
 const songsDir = path.join(BASE_DIR, 'uploads', 'songs')
 
-// Create directories if they don't exist
 fs.existsSync(coversDir) || fs.mkdirSync(coversDir, { recursive: true })
 fs.existsSync(songsDir) || fs.mkdirSync(songsDir, { recursive: true })
 
@@ -17,10 +16,11 @@ const storage = multer.diskStorage({
     cb(new Error('Invalid field name'))
   },
   filename(req, file, cb) {
-    const ext = path.extname(file.originalname)
+    const ext = path.extname(file.originalname || '').toLowerCase()
     const safeName = path
-      .basename(file.originalname, ext)
+      .basename(file.originalname || 'file', ext)
       .replace(/[^a-zA-Z0-9-_]/g, '_')
+      .replace(/_+/g, '_')
       .toLowerCase()
 
     cb(null, `${Date.now()}-${safeName}${ext}`)
@@ -56,7 +56,7 @@ const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 25 * 1024 * 1024
+    fileSize: 100 * 1024 * 1024
   }
 })
 

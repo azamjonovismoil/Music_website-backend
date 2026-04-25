@@ -59,8 +59,9 @@ const musicSchema = new mongoose.Schema(
     cover: { type: String, default: "" },
     url: { type: String, default: "" },
 
-    liked: { type: Boolean, default: false },
-    download: { type: Boolean, default: false },
+    playCount: { type: Number, default: 0 },
+    likeCount: { type: Number, default: 0 },
+    downloadCount: { type: Number, default: 0 },
 
     syncStatus: {
       type: String,

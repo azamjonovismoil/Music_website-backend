@@ -3,11 +3,7 @@ const jwt = require('jsonwebtoken')
 const passport = require('../utils/googleAuth')
 const User = require('../models/User')
 const { sendEmail } = require('../utils/sendEmail')
-const {
-  verificationTemplate,
-  resetPasswordTemplate,
-  welcomeTemplate,
-} = require('../utils/emailTemplates')
+const { resetPasswordTemplate } = require('../utils/emailTemplates')
 const { authMiddleware, COOKIE_NAME } = require('../middleware/auth')
 
 const router = express.Router()
@@ -21,8 +17,6 @@ if (!JWT_SECRET) {
 if (!CLIENT_URL) {
   throw new Error('CLIENT_URL is missing')
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 
 const generateCode = () => String(Math.floor(100000 + Math.random() * 900000))
 
@@ -63,11 +57,8 @@ const safeUser = (user) => ({
   bio: user.bio,
   avatar: user.avatar,
   isAdmin: user.isAdmin,
-  isEmailVerified: user.isEmailVerified,
   authProvider: user.authProvider,
 })
-
-// ── Register ──────────────────────────────────────────────────────────────────
 
 router.post('/register', async (req, res) => {
   try {
@@ -94,9 +85,6 @@ router.post('/register', async (req, res) => {
       })
     }
 
-    const code = generateCode()
-    const codeExpires = new Date(Date.now() + 10 * 60 * 1000)
-
     const user = await User.create({
       name: name.trim(),
       email: normalizedEmail,
@@ -104,21 +92,14 @@ router.post('/register', async (req, res) => {
       bio: bio?.trim() || '',
       isAdmin: 0,
       authProvider: 'local',
-      emailVerificationCode: code,
-      emailVerificationExpires: codeExpires,
-      isEmailVerified: false,
-    })
-
-    await sendEmail({
-      to: user.email,
-      ...verificationTemplate(user.name, code),
+      isEmailVerified: true,
     })
 
     const token = signToken(user)
     setTokenCookie(res, token)
 
     return res.status(201).json({
-      message: 'Registered successfully. Check your email for the verification code.',
+      message: 'Account created successfully',
       user: safeUser(user),
     })
   } catch (err) {
@@ -128,8 +109,6 @@ router.post('/register', async (req, res) => {
     })
   }
 })
-
-// ── Login ─────────────────────────────────────────────────────────────────────
 
 router.post('/login', async (req, res) => {
   try {
@@ -166,14 +145,6 @@ router.post('/login', async (req, res) => {
     const token = signToken(user)
     setTokenCookie(res, token)
 
-    if (!user.isEmailVerified) {
-      return res.status(200).json({
-        message: 'Email not verified',
-        needsEmailVerification: true,
-        user: safeUser(user),
-      })
-    }
-
     return res.json({
       message: 'Login successful',
       user: safeUser(user),
@@ -185,94 +156,6 @@ router.post('/login', async (req, res) => {
     })
   }
 })
-
-// ── Verify email ──────────────────────────────────────────────────────────────
-
-router.post('/verify-email', authMiddleware, async (req, res) => {
-  try {
-    const { code } = req.body
-    const user = req.user
-
-    if (user.isEmailVerified) {
-      return res.json({
-        message: 'Already verified',
-        user: safeUser(user),
-      })
-    }
-
-    if (!code || user.emailVerificationCode !== code) {
-      return res.status(400).json({
-        message: 'Invalid code',
-      })
-    }
-
-    if (!user.emailVerificationExpires || new Date() > new Date(user.emailVerificationExpires)) {
-      return res.status(400).json({
-        message: 'Code expired. Please request a new one.',
-      })
-    }
-
-    user.isEmailVerified = true
-    user.emailVerificationCode = undefined
-    user.emailVerificationExpires = undefined
-    await user.save()
-
-    sendEmail({
-      to: user.email,
-      ...welcomeTemplate(user.name),
-    }).catch((err) => {
-      console.warn('[Welcome email]', err.message)
-    })
-
-    const newToken = signToken(user)
-    setTokenCookie(res, newToken)
-
-    return res.json({
-      message: 'Email verified successfully',
-      user: safeUser(user),
-    })
-  } catch (err) {
-    console.error('[VerifyEmail]', err)
-    return res.status(500).json({
-      message: err.message || 'Server error',
-    })
-  }
-})
-
-// ── Resend verification ───────────────────────────────────────────────────────
-
-router.post('/resend-verification', authMiddleware, async (req, res) => {
-  try {
-    const user = req.user
-
-    if (user.isEmailVerified) {
-      return res.status(400).json({
-        message: 'Email already verified',
-      })
-    }
-
-    const code = generateCode()
-    user.emailVerificationCode = code
-    user.emailVerificationExpires = new Date(Date.now() + 10 * 60 * 1000)
-    await user.save()
-
-    await sendEmail({
-      to: user.email,
-      ...verificationTemplate(user.name, code),
-    })
-
-    return res.json({
-      message: 'Verification code resent',
-    })
-  } catch (err) {
-    console.error('[ResendVerification]', err)
-    return res.status(500).json({
-      message: err.message || 'Server error',
-    })
-  }
-})
-
-// ── Forgot password ───────────────────────────────────────────────────────────
 
 router.post('/forgot-password', async (req, res) => {
   try {
@@ -314,8 +197,6 @@ router.post('/forgot-password', async (req, res) => {
   }
 })
 
-// ── Reset password ────────────────────────────────────────────────────────────
-
 router.post('/reset-password', async (req, res) => {
   try {
     const { email, code, newPassword } = req.body
@@ -356,6 +237,7 @@ router.post('/reset-password', async (req, res) => {
     user.password = newPassword
     user.passwordResetCode = undefined
     user.passwordResetExpires = undefined
+    user.authProvider = 'local'
     await user.save()
 
     return res.json({
@@ -369,8 +251,6 @@ router.post('/reset-password', async (req, res) => {
   }
 })
 
-// ── Google OAuth — initiate ───────────────────────────────────────────────────
-
 router.get(
   '/google',
   passport.authenticate('google', {
@@ -378,8 +258,6 @@ router.get(
     session: false,
   })
 )
-
-// ── Google OAuth — callback ───────────────────────────────────────────────────
 
 router.get(
   '/google/callback',
@@ -392,7 +270,7 @@ router.get(
       const token = signToken(req.user)
       setTokenCookie(res, token)
 
-      const redirectPath = req.user.isAdmin === 1 ? '/admin' : '/user'
+      const redirectPath = Number(req.user.isAdmin) === 1 ? '/admin' : '/user'
       return res.redirect(`${CLIENT_URL}${redirectPath}`)
     } catch (err) {
       console.error('[Google Callback]', err)
@@ -401,15 +279,11 @@ router.get(
   }
 )
 
-// ── Get current user ──────────────────────────────────────────────────────────
-
 router.get('/me', authMiddleware, (req, res) => {
   return res.json({
     user: safeUser(req.user),
   })
 })
-
-// ── Logout ────────────────────────────────────────────────────────────────────
 
 router.post('/logout', (req, res) => {
   clearTokenCookie(res)
