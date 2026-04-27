@@ -71,7 +71,7 @@ const codeBox = (code, color = ACCENT) => `
                 border:1px solid rgba(14,165,233,0.2);
                 border-radius:14px;padding:20px 36px;">
       <span style="font-size:36px;font-weight:900;letter-spacing:10px;color:${color};
-                   font-family:'Courier New',monospace;">
+              font-family:'Courier New',monospace;">
         ${code}
       </span>
     </div>

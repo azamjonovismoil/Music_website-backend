@@ -2,12 +2,12 @@ const multer = require('multer')
 const path = require('path')
 const fs = require('fs')
 
-const BASE_DIR = path.join(__dirname, '..')
-const coversDir = path.join(BASE_DIR, 'uploads', 'covers')
-const songsDir = path.join(BASE_DIR, 'uploads', 'songs')
+const DATA_ROOT = process.env.DATA_ROOT || path.join(__dirname, '..', 'uploads')
+const coversDir = path.join(DATA_ROOT, 'covers')
+const songsDir = path.join(DATA_ROOT, 'songs')
 
-fs.existsSync(coversDir) || fs.mkdirSync(coversDir, { recursive: true })
-fs.existsSync(songsDir) || fs.mkdirSync(songsDir, { recursive: true })
+fs.mkdirSync(coversDir, { recursive: true })
+fs.mkdirSync(songsDir, { recursive: true })
 
 const storage = multer.diskStorage({
   destination(req, file, cb) {
@@ -24,7 +24,7 @@ const storage = multer.diskStorage({
       .toLowerCase()
 
     cb(null, `${Date.now()}-${safeName}${ext}`)
-  }
+  },
 })
 
 const fileFilter = (req, file, cb) => {
@@ -42,7 +42,7 @@ const fileFilter = (req, file, cb) => {
       'audio/wav',
       'audio/x-wav',
       'audio/mp4',
-      'audio/x-m4a'
+      'audio/x-m4a',
     ]
     if (!allowed.includes(file.mimetype)) {
       return cb(new Error('Only MP3, WAV, M4A allowed for audio'))
@@ -56,8 +56,8 @@ const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 100 * 1024 * 1024
-  }
+    fileSize: 100 * 1024 * 1024,
+  },
 })
 
 module.exports = upload

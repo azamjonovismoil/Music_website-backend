@@ -5,12 +5,13 @@ const mongoose = require('mongoose')
 const cors = require('cors')
 const cookieParser = require('cookie-parser')
 const path = require('path')
+const fs = require('fs')
 const passport = require('./utils/googleAuth')
 const { verifyMailConnection } = require('./utils/sendEmail')
 
 const authRouter = require('./routes/auth')
 const musicRouter = require('./routes/music')
-const playlistsRouter = require('./routes/playlists')
+const playlistsRouter = require('./routes/playlists') // agar fayl nomi playlist.js bo'lsa, shuni o'zgartir
 
 const app = express()
 const PORT = process.env.PORT || 5000
@@ -20,6 +21,13 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:7777',
 ].filter(Boolean)
+
+const DATA_ROOT = process.env.DATA_ROOT || path.join(__dirname, 'uploads')
+const coversPath = path.join(DATA_ROOT, 'covers')
+const songsPath = path.join(DATA_ROOT, 'songs')
+
+fs.mkdirSync(coversPath, { recursive: true })
+fs.mkdirSync(songsPath, { recursive: true })
 
 app.use(
   cors({
@@ -38,22 +46,20 @@ app.use(
 app.use(express.json({ limit: '50mb' }))
 app.use(express.urlencoded({ extended: true, limit: '50mb' }))
 app.use(cookieParser())
-
 app.use(passport.initialize())
 
-// Faqat cover public bo'ladi
-app.use('/uploads/covers', express.static(path.join(__dirname, 'uploads/covers')))
+app.use('/uploads/covers', express.static(coversPath))
+app.use('/uploads/songs', express.static(songsPath))
 
 app.get('/', (req, res) => {
-  res.status(200).json({
-    message: 'Backend is running',
-  })
+  res.status(200).json({ message: 'Backend is running' })
 })
 
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
     timestamp: new Date().toISOString(),
+    dataRoot: DATA_ROOT,
   })
 })
 
@@ -90,6 +96,7 @@ async function startServer() {
 
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`Server running on port ${PORT}`)
+      console.log(`DATA_ROOT: ${DATA_ROOT}`)
     })
   } catch (err) {
     console.error('Startup error:', err.message)
