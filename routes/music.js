@@ -4,6 +4,7 @@ const fs = require('fs')
 const mm = require('music-metadata')
 const axios = require('axios')
 const jwt = require('jsonwebtoken')
+
 const router = express.Router()
 
 const Music = require('../models/Music')
@@ -93,7 +94,7 @@ const parseSyncedLyrics = (raw = '') => {
         end: time + 2,
         text,
         confidence: 0,
-        words: []
+        words: [],
       }
     })
     .filter(Boolean)
@@ -114,6 +115,7 @@ const getOptionalUser = async (req) => {
   try {
     const token = extractOptionalToken(req)
     if (!token) return null
+    if (!process.env.JWT_SECRET) return null
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET)
     if (!decoded?.id) return null
@@ -139,9 +141,9 @@ const runPythonSyncFromLyrics = async (audioPath, lyricsText) => {
 
   const { data } = await axios.post(`${SYNC_SERVICE_URL}/sync/from-lyrics`, form, {
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded'
+      'Content-Type': 'application/x-www-form-urlencoded',
     },
-    timeout: 1000 * 60 * 10
+    timeout: 1000 * 60 * 10,
   })
 
   return extractSyncPayload(data)
@@ -155,7 +157,7 @@ const toSafeMusic = (music, extras = {}) => {
     streamUrl: `/api/music/${obj._id}/stream`,
     liked: false,
     downloaded: false,
-    ...extras
+    ...extras,
   }
 }
 
@@ -174,11 +176,15 @@ const sendAudioStream = (req, res, filePath) => {
 
   const ext = path.extname(filePath).toLowerCase()
   const contentType =
-    ext === '.mp3' ? 'audio/mpeg' :
-      ext === '.wav' ? 'audio/wav' :
-        ext === '.ogg' ? 'audio/ogg' :
-          ext === '.m4a' ? 'audio/mp4' :
-            'application/octet-stream'
+    ext === '.mp3'
+      ? 'audio/mpeg'
+      : ext === '.wav'
+        ? 'audio/wav'
+        : ext === '.ogg'
+          ? 'audio/ogg'
+          : ext === '.m4a'
+            ? 'audio/mp4'
+            : 'application/octet-stream'
 
   if (range) {
     const parts = range.replace(/bytes=/, '').split('-')
@@ -197,7 +203,7 @@ const sendAudioStream = (req, res, filePath) => {
       'Content-Range': `bytes ${start}-${finalEnd}/${fileSize}`,
       'Accept-Ranges': 'bytes',
       'Content-Length': chunkSize,
-      'Content-Type': contentType
+      'Content-Type': contentType,
     })
 
     fs.createReadStream(filePath, { start, end: finalEnd }).pipe(res)
@@ -207,13 +213,12 @@ const sendAudioStream = (req, res, filePath) => {
   res.writeHead(200, {
     'Content-Length': fileSize,
     'Content-Type': contentType,
-    'Accept-Ranges': 'bytes'
+    'Accept-Ranges': 'bytes',
   })
 
   fs.createReadStream(filePath).pipe(res)
 }
 
-// Public published list
 router.get('/', async (req, res) => {
   try {
     const musics = await Music.find({ status: 'published' }).sort({ createdAt: -1 })
@@ -224,28 +229,12 @@ router.get('/', async (req, res) => {
   }
 })
 
-// Admin all musics
 router.get('/admin/all', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const musics = await Music.find({}).sort({ createdAt: -1 })
     res.json(musics.map((music) => serializeForUser(music, req.user)))
   } catch (err) {
     res.status(500).json({ message: 'Error fetching admin musics', error: err.message })
-  }
-})
-
-// Public detail
-router.get('/:id', async (req, res) => {
-  try {
-    const music = await Music.findById(req.params.id)
-    if (!music || music.status !== 'published') {
-      return res.status(404).json({ message: 'Music not found' })
-    }
-
-    const user = await getOptionalUser(req)
-    res.json(serializeForUser(music, user))
-  } catch (err) {
-    res.status(500).json({ message: 'Error fetching music', error: err.message })
   }
 })
 
@@ -307,7 +296,7 @@ router.get('/me/continue-listening', authMiddleware, async (req, res) => {
         return {
           ...serializeForUser(music, req.user),
           resumeTime: item.currentTime || 0,
-          resumeUpdatedAt: item.updatedAt || null
+          resumeUpdatedAt: item.updatedAt || null,
         }
       })
       .filter(Boolean)
@@ -315,6 +304,20 @@ router.get('/me/continue-listening', authMiddleware, async (req, res) => {
     res.json(result)
   } catch (err) {
     res.status(500).json({ message: 'Error fetching continue listening', error: err.message })
+  }
+})
+
+router.get('/:id', async (req, res) => {
+  try {
+    const music = await Music.findById(req.params.id)
+    if (!music || music.status !== 'published') {
+      return res.status(404).json({ message: 'Music not found' })
+    }
+
+    const user = await getOptionalUser(req)
+    res.json(serializeForUser(music, user))
+  } catch (err) {
+    res.status(500).json({ message: 'Error fetching music', error: err.message })
   }
 })
 
@@ -353,7 +356,7 @@ router.post('/:id/play', authMiddleware, async (req, res) => {
 
     req.user.recentlyPlayed.unshift({
       music: music._id,
-      playedAt: new Date()
+      playedAt: new Date(),
     })
 
     req.user.recentlyPlayed = req.user.recentlyPlayed.slice(0, 50)
@@ -384,7 +387,7 @@ router.patch('/:id/progress', authMiddleware, async (req, res) => {
         music: music._id,
         currentTime,
         duration,
-        updatedAt: new Date()
+        updatedAt: new Date(),
       })
     }
 
@@ -453,7 +456,7 @@ router.post(
   adminMiddleware,
   upload.fields([
     { name: 'cover', maxCount: 1 },
-    { name: 'song', maxCount: 1 }
+    { name: 'song', maxCount: 1 },
   ]),
   async (req, res) => {
     try {
@@ -472,7 +475,7 @@ router.post(
         status,
         isExplicit,
         isFeatured,
-        isRecommended
+        isRecommended,
       } = req.body
 
       const tags = parseTags(req.body.tags)
@@ -528,7 +531,7 @@ router.post(
         syncUpdatedAt: normalizedSyncedLyricsRaw ? new Date() : null,
         syncError: '',
         cover: req.files?.cover?.[0] ? `/uploads/covers/${req.files.cover[0].filename}` : '',
-        url: `/uploads/songs/${songFile.filename}`
+        url: `/uploads/songs/${songFile.filename}`,
       })
 
       const savedMusic = await music.save()
@@ -545,7 +548,7 @@ router.put(
   adminMiddleware,
   upload.fields([
     { name: 'cover', maxCount: 1 },
-    { name: 'song', maxCount: 1 }
+    { name: 'song', maxCount: 1 },
   ]),
   async (req, res) => {
     try {
@@ -566,13 +569,23 @@ router.put(
       if (req.body.country !== undefined) music.country = normalizeString(req.body.country)
       if (req.body.releaseDate !== undefined) music.releaseDate = normalizeDate(req.body.releaseDate)
       if (req.body.tags !== undefined) music.tags = parseTags(req.body.tags)
+
       if (req.body.status !== undefined) {
         const nextStatus = normalizeString(req.body.status)
         if (['draft', 'published', 'archived'].includes(nextStatus)) music.status = nextStatus
       }
-      if (req.body.isExplicit !== undefined) music.isExplicit = normalizeBoolean(req.body.isExplicit, music.isExplicit)
-      if (req.body.isFeatured !== undefined) music.isFeatured = normalizeBoolean(req.body.isFeatured, music.isFeatured)
-      if (req.body.isRecommended !== undefined) music.isRecommended = normalizeBoolean(req.body.isRecommended, music.isRecommended)
+
+      if (req.body.isExplicit !== undefined) {
+        music.isExplicit = normalizeBoolean(req.body.isExplicit, music.isExplicit)
+      }
+
+      if (req.body.isFeatured !== undefined) {
+        music.isFeatured = normalizeBoolean(req.body.isFeatured, music.isFeatured)
+      }
+
+      if (req.body.isRecommended !== undefined) {
+        music.isRecommended = normalizeBoolean(req.body.isRecommended, music.isRecommended)
+      }
 
       if (req.body.syncedLyricsRaw !== undefined) {
         const raw = normalizeString(req.body.syncedLyricsRaw)
@@ -662,7 +675,7 @@ router.post('/:id/generate-sync-from-lyrics', authMiddleware, adminMiddleware, a
 
     res.status(500).json({
       message: 'Generate sync from lyrics failed',
-      error: err?.response?.data?.detail || err.message
+      error: err?.response?.data?.detail || err.message,
     })
   }
 })
@@ -685,8 +698,8 @@ router.delete('/:id', authMiddleware, adminMiddleware, async (req, res) => {
           favourites: music._id,
           downloaded: music._id,
           recentlyPlayed: { music: music._id },
-          continueListening: { music: music._id }
-        }
+          continueListening: { music: music._id },
+        },
       }
     )
 

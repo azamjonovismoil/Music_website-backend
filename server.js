@@ -11,7 +11,7 @@ const { verifyMailConnection } = require('./utils/sendEmail')
 
 const authRouter = require('./routes/auth')
 const musicRouter = require('./routes/music')
-const playlistsRouter = require('./routes/playlists') // agar fayl nomi playlist.js bo'lsa, shuni o'zgartir
+const playlistsRouter = require('./routes/playlist')
 
 const app = express()
 const PORT = process.env.PORT || 5000
