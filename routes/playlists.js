@@ -2,7 +2,7 @@ const express = require('express')
 const router = express.Router()
 
 const Playlist = require('../models/playlist-temp')
-const Music = require('../models/Music')
+const Music = require('../models/music-temp')
 const { authMiddleware } = require('../middleware/auth')
 
 const normalizeString = (value = '') => String(value).trim()

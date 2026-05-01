@@ -7,7 +7,7 @@ const jwt = require('jsonwebtoken')
 
 const router = express.Router()
 
-const Music = require('../models/Music')
+const Music = require('../models/music-temp')
 const User = require('../models/User')
 const upload = require('../middleware/upload')
 const { authMiddleware, adminMiddleware, COOKIE_NAME } = require('../middleware/auth')
