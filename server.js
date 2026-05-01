@@ -20,6 +20,7 @@ const allowedOrigins = [
   process.env.CLIENT_URL,
   'http://localhost:5173',
   'http://localhost:7777',
+  'https://exclusivemusics.netlify.app',
 ].filter(Boolean)
 
 const DATA_ROOT = process.env.DATA_ROOT || path.join(__dirname, 'uploads')
@@ -97,6 +98,7 @@ async function startServer() {
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`Server running on port ${PORT}`)
       console.log(`DATA_ROOT: ${DATA_ROOT}`)
+      console.log('Allowed origins:', allowedOrigins)
     })
   } catch (err) {
     console.error('Startup error:', err.message)

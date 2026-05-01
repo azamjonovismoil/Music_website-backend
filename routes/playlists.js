@@ -1,7 +1,7 @@
 const express = require('express')
 const router = express.Router()
 
-const Playlist = require('../models/Playlist')
+const Playlist = require('../models/playlist-temp')
 const Music = require('../models/Music')
 const { authMiddleware } = require('../middleware/auth')
 
