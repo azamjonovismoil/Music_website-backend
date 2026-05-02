@@ -35,7 +35,7 @@ const parseTags = (rawTags) => {
   } catch {
     return String(rawTags)
       .split(',')
-      .map((tag) => tag.replace(/^#/, '').trim())
+      .map((tag) => String(tag).replace(/^#/, '').trim())
       .filter(Boolean)
   }
 }
@@ -114,8 +114,7 @@ const extractOptionalToken = (req) => {
 const getOptionalUser = async (req) => {
   try {
     const token = extractOptionalToken(req)
-    if (!token) return null
-    if (!process.env.JWT_SECRET) return null
+    if (!token || !process.env.JWT_SECRET) return null
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET)
     if (!decoded?.id) return null
@@ -140,9 +139,7 @@ const runPythonSyncFromLyrics = async (audioPath, lyricsText) => {
   form.append('model_size', 'base')
 
   const { data } = await axios.post(`${SYNC_SERVICE_URL}/sync/from-lyrics`, form, {
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     timeout: 1000 * 60 * 10,
   })
 
@@ -225,6 +222,7 @@ router.get('/', async (req, res) => {
     const user = await getOptionalUser(req)
     res.json(musics.map((music) => serializeForUser(music, user)))
   } catch (err) {
+    console.error('[GET /api/music]', err)
     res.status(500).json({ message: 'Error fetching musics', error: err.message })
   }
 })
@@ -235,75 +233,6 @@ router.get('/admin/all', authMiddleware, adminMiddleware, async (req, res) => {
     res.json(musics.map((music) => serializeForUser(music, req.user)))
   } catch (err) {
     res.status(500).json({ message: 'Error fetching admin musics', error: err.message })
-  }
-})
-
-router.get('/me/liked/list', authMiddleware, async (req, res) => {
-  try {
-    const ids = req.user.favourites || []
-    const musics = await Music.find({ _id: { $in: ids }, status: 'published' }).sort({ createdAt: -1 })
-    res.json(musics.map((music) => serializeForUser(music, req.user)))
-  } catch (err) {
-    res.status(500).json({ message: 'Error fetching liked tracks', error: err.message })
-  }
-})
-
-router.get('/me/downloaded/list', authMiddleware, async (req, res) => {
-  try {
-    const ids = req.user.downloaded || []
-    const musics = await Music.find({ _id: { $in: ids }, status: 'published' }).sort({ createdAt: -1 })
-    res.json(musics.map((music) => serializeForUser(music, req.user)))
-  } catch (err) {
-    res.status(500).json({ message: 'Error fetching downloaded tracks', error: err.message })
-  }
-})
-
-router.get('/me/recently-played', authMiddleware, async (req, res) => {
-  try {
-    const items = [...(req.user.recentlyPlayed || [])]
-      .sort((a, b) => new Date(b.playedAt) - new Date(a.playedAt))
-      .slice(0, 30)
-
-    const ids = items.map((i) => i.music)
-    const musics = await Music.find({ _id: { $in: ids }, status: 'published' })
-    const map = new Map(musics.map((m) => [String(m._id), m]))
-
-    const result = items
-      .map((item) => map.get(String(item.music)))
-      .filter(Boolean)
-      .map((music) => serializeForUser(music, req.user))
-
-    res.json(result)
-  } catch (err) {
-    res.status(500).json({ message: 'Error fetching recently played', error: err.message })
-  }
-})
-
-router.get('/me/continue-listening', authMiddleware, async (req, res) => {
-  try {
-    const items = [...(req.user.continueListening || [])]
-      .sort((a, b) => new Date(b.updatedAt) - new Date(a.updatedAt))
-      .slice(0, 30)
-
-    const ids = items.map((i) => i.music)
-    const musics = await Music.find({ _id: { $in: ids }, status: 'published' })
-    const map = new Map(musics.map((m) => [String(m._id), m]))
-
-    const result = items
-      .map((item) => {
-        const music = map.get(String(item.music))
-        if (!music) return null
-        return {
-          ...serializeForUser(music, req.user),
-          resumeTime: item.currentTime || 0,
-          resumeUpdatedAt: item.updatedAt || null,
-        }
-      })
-      .filter(Boolean)
-
-    res.json(result)
-  } catch (err) {
-    res.status(500).json({ message: 'Error fetching continue listening', error: err.message })
   }
 })
 
@@ -321,12 +250,14 @@ router.get('/:id', async (req, res) => {
   }
 })
 
-router.get('/:id/stream', authMiddleware, async (req, res) => {
+router.get('/:id/stream', async (req, res) => {
   try {
     const music = await Music.findById(req.params.id)
     if (!music) return res.status(404).json({ message: 'Music not found' })
 
-    if (music.status !== 'published' && Number(req.user.isAdmin) !== 1) {
+    const user = await getOptionalUser(req)
+
+    if (music.status !== 'published' && Number(user?.isAdmin) !== 1) {
       return res.status(403).json({ message: 'Music is not available' })
     }
 
@@ -338,65 +269,6 @@ router.get('/:id/stream', authMiddleware, async (req, res) => {
     sendAudioStream(req, res, filePath)
   } catch (err) {
     res.status(500).json({ message: 'Error streaming music', error: err.message })
-  }
-})
-
-router.post('/:id/play', authMiddleware, async (req, res) => {
-  try {
-    const music = await Music.findById(req.params.id)
-    if (!music) return res.status(404).json({ message: 'Music not found' })
-
-    music.playCount = (music.playCount || 0) + 1
-    await music.save()
-
-    const musicId = String(music._id)
-    req.user.recentlyPlayed = (req.user.recentlyPlayed || []).filter(
-      (item) => String(item.music) !== musicId
-    )
-
-    req.user.recentlyPlayed.unshift({
-      music: music._id,
-      playedAt: new Date(),
-    })
-
-    req.user.recentlyPlayed = req.user.recentlyPlayed.slice(0, 50)
-    await req.user.save()
-
-    res.json({ message: 'Play registered', playCount: music.playCount })
-  } catch (err) {
-    res.status(500).json({ message: 'Error registering play', error: err.message })
-  }
-})
-
-router.patch('/:id/progress', authMiddleware, async (req, res) => {
-  try {
-    const music = await Music.findById(req.params.id)
-    if (!music) return res.status(404).json({ message: 'Music not found' })
-
-    const currentTime = Math.max(0, Number(req.body.currentTime || 0))
-    const duration = Math.max(0, Number(req.body.duration || music.duration || 0))
-    const completed = Boolean(req.body.completed)
-    const musicId = String(music._id)
-
-    req.user.continueListening = (req.user.continueListening || []).filter(
-      (item) => String(item.music) !== musicId
-    )
-
-    if (!completed && currentTime > 3 && duration > 0 && currentTime < duration - 5) {
-      req.user.continueListening.unshift({
-        music: music._id,
-        currentTime,
-        duration,
-        updatedAt: new Date(),
-      })
-    }
-
-    req.user.continueListening = req.user.continueListening.slice(0, 50)
-    await req.user.save()
-
-    res.json({ message: 'Progress updated' })
-  } catch (err) {
-    res.status(500).json({ message: 'Error updating progress', error: err.message })
   }
 })
 
@@ -460,71 +332,55 @@ router.post(
   ]),
   async (req, res) => {
     try {
-      const {
-        title,
-        artist,
-        author,
-        bio,
-        artistBio,
-        lyrics,
-        syncedLyricsRaw,
-        album,
-        language,
-        releaseDate,
-        country,
-        status,
-        isExplicit,
-        isFeatured,
-        isRecommended,
-      } = req.body
+      const songFile = req.files?.song?.[0]
+      if (!songFile) {
+        return res.status(400).json({ message: 'Song file is required' })
+      }
+
+      const title = normalizeString(req.body.title)
+      const artist = normalizeString(req.body.artist)
+
+      if (!title || !artist) {
+        return res.status(400).json({ message: 'Title and artist are required' })
+      }
 
       const tags = parseTags(req.body.tags)
       const genre = parseStringArray(req.body.genre)
       const mood = parseStringArray(req.body.mood)
       const featuredArtists = parseStringArray(req.body.featuredArtists)
 
-      if (!normalizeString(title) || !normalizeString(artist)) {
-        return res.status(400).json({ message: 'Title and artist are required' })
-      }
-
-      if (!req.files?.song?.[0]) {
-        return res.status(400).json({ message: 'Song file is required' })
-      }
-
-      const songFile = req.files.song[0]
       let duration = 0
-
       try {
         const metadata = await mm.parseFile(songFile.path)
         duration = Math.round(metadata.format.duration || 0)
       } catch { }
 
-      const normalizedSyncedLyricsRaw = normalizeString(syncedLyricsRaw)
+      const normalizedSyncedLyricsRaw = normalizeString(req.body.syncedLyricsRaw)
       const syncedLyrics = parseSyncedLyrics(normalizedSyncedLyricsRaw)
 
       const music = new Music({
-        title: normalizeString(title),
-        artist: normalizeString(artist),
-        author: normalizeString(author),
+        title,
+        artist,
+        author: normalizeString(req.body.author),
         featuredArtists,
-        bio: normalizeString(bio),
-        artistBio: normalizeString(artistBio),
-        lyrics: normalizeString(lyrics),
+        bio: normalizeString(req.body.bio),
+        artistBio: normalizeString(req.body.artistBio),
+        lyrics: normalizeString(req.body.lyrics),
         syncedLyricsRaw: normalizedSyncedLyricsRaw,
         syncedLyrics,
         tags,
         genre,
-        album: normalizeString(album),
-        language: normalizeString(language),
+        album: normalizeString(req.body.album),
+        language: normalizeString(req.body.language),
         mood,
-        country: normalizeString(country),
-        releaseDate: normalizeDate(releaseDate),
-        status: ['draft', 'published', 'archived'].includes(normalizeString(status))
-          ? normalizeString(status)
+        country: normalizeString(req.body.country),
+        releaseDate: normalizeDate(req.body.releaseDate),
+        status: ['draft', 'published', 'archived'].includes(normalizeString(req.body.status))
+          ? normalizeString(req.body.status)
           : 'draft',
-        isExplicit: normalizeBoolean(isExplicit, false),
-        isFeatured: normalizeBoolean(isFeatured, false),
-        isRecommended: normalizeBoolean(isRecommended, false),
+        isExplicit: normalizeBoolean(req.body.isExplicit, false),
+        isFeatured: normalizeBoolean(req.body.isFeatured, false),
+        isRecommended: normalizeBoolean(req.body.isRecommended, false),
         duration,
         syncStatus: normalizedSyncedLyricsRaw ? 'ready' : 'none',
         syncModel: normalizedSyncedLyricsRaw ? 'manual' : '',
@@ -537,6 +393,7 @@ router.post(
       const savedMusic = await music.save()
       res.status(201).json(serializeForUser(savedMusic, req.user))
     } catch (err) {
+      console.error('[POST /api/music]', err)
       res.status(500).json({ message: 'Error saving music', error: err.message })
     }
   }
@@ -572,17 +429,17 @@ router.put(
 
       if (req.body.status !== undefined) {
         const nextStatus = normalizeString(req.body.status)
-        if (['draft', 'published', 'archived'].includes(nextStatus)) music.status = nextStatus
+        if (['draft', 'published', 'archived'].includes(nextStatus)) {
+          music.status = nextStatus
+        }
       }
 
       if (req.body.isExplicit !== undefined) {
         music.isExplicit = normalizeBoolean(req.body.isExplicit, music.isExplicit)
       }
-
       if (req.body.isFeatured !== undefined) {
         music.isFeatured = normalizeBoolean(req.body.isFeatured, music.isFeatured)
       }
-
       if (req.body.isRecommended !== undefined) {
         music.isRecommended = normalizeBoolean(req.body.isRecommended, music.isRecommended)
       }
@@ -627,6 +484,7 @@ router.put(
       const updatedMusic = await music.save()
       res.json(serializeForUser(updatedMusic, req.user))
     } catch (err) {
+      console.error('[PUT /api/music/:id]', err)
       res.status(500).json({ message: 'Error updating music', error: err.message })
     }
   }
