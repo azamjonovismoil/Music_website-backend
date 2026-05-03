@@ -1,6 +1,5 @@
 const express = require('express')
 const jwt = require('jsonwebtoken')
-const passport = require('../utils/googleAuth')
 const User = require('../models/User')
 const { sendEmail } = require('../utils/sendEmail')
 const { resetPasswordTemplate } = require('../utils/emailTemplates')
@@ -12,6 +11,14 @@ const { JWT_SECRET, CLIENT_URL, NODE_ENV } = process.env
 
 if (!JWT_SECRET) throw new Error('JWT_SECRET is missing')
 if (!CLIENT_URL) throw new Error('CLIENT_URL is missing')
+
+// Passport ixtiyoriy
+let passport = null
+try {
+  passport = require('../utils/googleAuth')
+} catch (e) {
+  console.warn('[Auth] Google passport not loaded:', e.message)
+}
 
 const generateCode = () => String(Math.floor(100000 + Math.random() * 900000))
 
@@ -119,10 +126,7 @@ router.post('/login', async (req, res) => {
     const token = signToken(user)
     setTokenCookie(res, token)
 
-    return res.json({
-      message: 'Login successful',
-      user: safeUser(user),
-    })
+    return res.json({ message: 'Login successful', user: safeUser(user) })
   } catch (err) {
     console.error('[Login]', err)
     return res.status(500).json({ message: err.message || 'Server error' })
@@ -190,42 +194,49 @@ router.post('/reset-password', async (req, res) => {
     user.authProvider = 'local'
     await user.save()
 
-    return res.json({
-      message: 'Password reset successfully. You can now sign in.',
-    })
+    return res.json({ message: 'Password reset successfully. You can now sign in.' })
   } catch (err) {
     console.error('[ResetPassword]', err)
     return res.status(500).json({ message: err.message || 'Server error' })
   }
 })
 
-router.get(
-  '/google',
-  passport.authenticate('google', {
-    scope: ['profile', 'email'],
-    session: false,
-  })
-)
+// Google routes — faqat passport mavjud bo'lganda ishlaydi
+if (passport) {
+  router.get(
+    '/google',
+    passport.authenticate('google', {
+      scope: ['profile', 'email'],
+      session: false,
+    })
+  )
 
-router.get(
-  '/google/callback',
-  passport.authenticate('google', {
-    failureRedirect: `${CLIENT_URL}/login?error=google_failed`,
-    session: false,
-  }),
-  (req, res) => {
-    try {
-      const token = signToken(req.user)
-      setTokenCookie(res, token)
-
-      const redirectPath = Number(req.user.isAdmin) === 1 ? '/admin' : '/user'
-      return res.redirect(`${CLIENT_URL}${redirectPath}`)
-    } catch (err) {
-      console.error('[Google Callback]', err)
-      return res.redirect(`${CLIENT_URL}/login?error=server`)
+  router.get(
+    '/google/callback',
+    passport.authenticate('google', {
+      failureRedirect: `${CLIENT_URL}/login?error=google_failed`,
+      session: false,
+    }),
+    (req, res) => {
+      try {
+        const token = signToken(req.user)
+        setTokenCookie(res, token)
+        const redirectPath = Number(req.user.isAdmin) === 1 ? '/admin' : '/user'
+        return res.redirect(`${CLIENT_URL}${redirectPath}`)
+      } catch (err) {
+        console.error('[Google Callback]', err)
+        return res.redirect(`${CLIENT_URL}/login?error=server`)
+      }
     }
-  }
-)
+  )
+} else {
+  router.get('/google', (req, res) => {
+    res.status(503).json({ message: 'Google login is not configured' })
+  })
+  router.get('/google/callback', (req, res) => {
+    res.redirect(`${CLIENT_URL}/login?error=google_not_configured`)
+  })
+}
 
 router.get('/me', authMiddleware, (req, res) => {
   return res.json({ user: safeUser(req.user) })
