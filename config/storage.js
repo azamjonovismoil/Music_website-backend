@@ -1,41 +1,56 @@
 const path = require('path')
-const fs = require('fs')
+const crypto = require('crypto')
+const supabase = require('../config/supabase')
 
-const isProd = process.env.NODE_ENV === 'production'
+const COVERS_BUCKET = process.env.SUPABASE_BUCKET_COVERS || 'music-covers'
+const SONGS_BUCKET = process.env.SUPABASE_BUCKET_SONGS || 'music-songs'
 
-const DATA_ROOT =
-  process.env.DATA_ROOT ||
-  (isProd
-    ? '/tmp/musicapp-uploads'
-    : path.join(__dirname, '..', 'uploads'))
-
-const coversDir = path.join(DATA_ROOT, 'covers')
-const songsDir = path.join(DATA_ROOT, 'songs')
-
-fs.mkdirSync(coversDir, { recursive: true })
-fs.mkdirSync(songsDir, { recursive: true })
-
-function stripUploadsPrefix(value = '') {
-  return String(value || '')
-    .replace(/^\/+/, '')
-    .replace(/^uploads\/+/, '')
+const sanitizeBaseName = (filename = 'file') => {
+  const ext = path.extname(filename)
+  return (
+    path
+      .basename(filename, ext)
+      .replace(/[^a-zA-Z0-9-_]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase() || 'file'
+  )
 }
 
-function toStoredUrl(type, filename) {
-  if (!filename) return ''
-  return `/uploads/${type}/${filename}`
+const makeFileKey = (folder, originalname = 'file') => {
+  const ext = path.extname(originalname || '').toLowerCase()
+  const safe = sanitizeBaseName(originalname)
+  const rand = crypto.randomBytes(6).toString('hex')
+  return `${folder}/${Date.now()}-${rand}-${safe}${ext}`
 }
 
-function toAbsolutePath(storedUrl = '') {
-  const clean = stripUploadsPrefix(storedUrl)
-  return path.join(DATA_ROOT, clean)
+const uploadBufferToBucket = async ({ bucket, key, buffer, contentType }) => {
+  const { error } = await supabase.storage.from(bucket).upload(key, buffer, {
+    contentType,
+    upsert: false,
+  })
+
+  if (error) throw error
+
+  const { data } = supabase.storage.from(bucket).getPublicUrl(key)
+
+  return {
+    path: key,
+    url: data.publicUrl,
+  }
+}
+
+const removeFromBucket = async ({ bucket, key }) => {
+  if (!key) return
+  try {
+    await supabase.storage.from(bucket).remove([key])
+  } catch { }
 }
 
 module.exports = {
-  DATA_ROOT,
-  coversDir,
-  songsDir,
-  stripUploadsPrefix,
-  toStoredUrl,
-  toAbsolutePath,
+  COVERS_BUCKET,
+  SONGS_BUCKET,
+  makeFileKey,
+  uploadBufferToBucket,
+  removeFromBucket,
 }

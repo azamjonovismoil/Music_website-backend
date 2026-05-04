@@ -1,22 +1,13 @@
 const mongoose = require('mongoose')
 
-const syncedWordSchema = new mongoose.Schema(
+const syncedLyricLineSchema = new mongoose.Schema(
   {
-    word: { type: String, required: true, trim: true },
+    time: { type: Number, default: 0 },
     start: { type: Number, default: 0 },
     end: { type: Number, default: 0 },
-  },
-  { _id: false }
-)
-
-const syncedLyricSchema = new mongoose.Schema(
-  {
-    time: { type: Number, required: true },
-    start: { type: Number, default: 0 },
-    end: { type: Number, default: 0 },
-    text: { type: String, required: true, trim: true },
+    text: { type: String, default: '' },
     confidence: { type: Number, default: 0 },
-    words: { type: [syncedWordSchema], default: [] },
+    words: { type: [mongoose.Schema.Types.Mixed], default: [] },
   },
   { _id: false }
 )
@@ -26,21 +17,39 @@ const musicSchema = new mongoose.Schema(
     title: { type: String, required: true, trim: true },
     artist: { type: String, required: true, trim: true },
     author: { type: String, default: '', trim: true },
+
     featuredArtists: { type: [String], default: [] },
-
-    bio: { type: String, default: '' },
-    artistBio: { type: String, default: '' },
-    lyrics: { type: String, default: '' },
-
-    syncedLyricsRaw: { type: String, default: '' },
-    syncedLyrics: { type: [syncedLyricSchema], default: [] },
-
-    tags: { type: [String], default: [] },
     genre: { type: [String], default: [] },
+    mood: { type: [String], default: [] },
+    tags: { type: [String], default: [] },
+
     album: { type: String, default: '', trim: true },
     language: { type: String, default: '', trim: true },
-    mood: { type: [String], default: [] },
     country: { type: String, default: '', trim: true },
+
+    bio: { type: String, default: '', trim: true },
+    artistBio: { type: String, default: '', trim: true },
+    lyrics: { type: String, default: '', trim: true },
+
+    syncedLyricsRaw: { type: String, default: '' },
+    syncedLyrics: { type: [syncedLyricLineSchema], default: [] },
+
+    syncStatus: {
+      type: String,
+      enum: ['none', 'processing', 'ready', 'failed'],
+      default: 'none',
+    },
+    syncModel: { type: String, default: '' },
+    syncUpdatedAt: { type: Date, default: null },
+    syncError: { type: String, default: '' },
+
+    cover: { type: String, default: '' },
+    coverStorageKey: { type: String, default: '' },
+
+    url: { type: String, default: '' },
+    audioStorageKey: { type: String, default: '' },
+
+    duration: { type: Number, default: 0 },
     releaseDate: { type: Date, default: null },
 
     status: {
@@ -53,23 +62,9 @@ const musicSchema = new mongoose.Schema(
     isFeatured: { type: Boolean, default: false },
     isRecommended: { type: Boolean, default: false },
 
-    duration: { type: Number, default: 0 },
-    lrcFile: { type: String, default: '' },
-    cover: { type: String, default: '' },
-    url: { type: String, default: '' },
-
-    playCount: { type: Number, default: 0 },
     likeCount: { type: Number, default: 0 },
     downloadCount: { type: Number, default: 0 },
-
-    syncStatus: {
-      type: String,
-      enum: ['none', 'processing', 'ready', 'failed'],
-      default: 'none',
-    },
-    syncModel: { type: String, default: 'base' },
-    syncUpdatedAt: { type: Date, default: null },
-    syncError: { type: String, default: '' },
+    playCount: { type: Number, default: 0 },
   },
   { timestamps: true }
 )
