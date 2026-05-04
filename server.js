@@ -4,9 +4,8 @@ const express = require('express')
 const mongoose = require('mongoose')
 const cors = require('cors')
 const cookieParser = require('cookie-parser')
-const path = require('path')
-const fs = require('fs')
 const { verifyMailConnection } = require('./utils/sendEmail')
+const { DATA_ROOT, coversDir, songsDir } = require('./config/storage')
 
 const authRouter = require('./routes/auth')
 const musicRouter = require('./routes/music')
@@ -15,7 +14,6 @@ const playlistsRouter = require('./routes/playlists')
 const app = express()
 const PORT = process.env.PORT || 5000
 
-// Google passport — ixtiyoriy, yo'q bo'lsa server ishlab turadi
 let passport = null
 try {
   passport = require('./utils/googleAuth')
@@ -35,23 +33,10 @@ const allowedOrigins = [
   'https://www.exclusivemusics.com',
 ].filter(Boolean)
 
-const DATA_ROOT =
-  process.env.DATA_ROOT ||
-  (process.env.NODE_ENV === 'production'
-    ? '/tmp/musicapp-uploads'
-    : path.join(__dirname, 'uploads'))
-
-const coversPath = path.join(DATA_ROOT, 'covers')
-const songsPath = path.join(DATA_ROOT, 'songs')
-
-fs.mkdirSync(coversPath, { recursive: true })
-fs.mkdirSync(songsPath, { recursive: true })
-
 const corsOptions = {
   origin(origin, callback) {
     if (!origin) return callback(null, true)
     if (allowedOrigins.includes(origin)) return callback(null, true)
-    console.warn('[CORS] Blocked origin:', origin)
     return callback(new Error(`CORS blocked for origin: ${origin}`))
   },
   credentials: true,
@@ -73,7 +58,7 @@ if (passport) {
 
 app.use(
   '/uploads/covers',
-  express.static(coversPath, {
+  express.static(coversDir, {
     setHeaders(res) {
       res.setHeader('Cache-Control', 'public, max-age=31536000')
       res.setHeader('Access-Control-Allow-Origin', '*')
@@ -83,7 +68,7 @@ app.use(
 
 app.use(
   '/uploads/songs',
-  express.static(songsPath, {
+  express.static(songsDir, {
     setHeaders(res) {
       res.setHeader('Cache-Control', 'public, max-age=31536000')
       res.setHeader('Access-Control-Allow-Origin', '*')
@@ -92,7 +77,10 @@ app.use(
 )
 
 app.get('/', (req, res) => {
-  res.status(200).json({ message: 'Backend is running', dataRoot: DATA_ROOT })
+  res.status(200).json({
+    message: 'Backend is running',
+    dataRoot: DATA_ROOT,
+  })
 })
 
 app.get('/api/health', (req, res) => {
@@ -100,9 +88,9 @@ app.get('/api/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     dataRoot: DATA_ROOT,
-    allowedOrigins,
     nodeEnv: process.env.NODE_ENV,
-    googleAuth: !!passport,
+    allowedOrigins,
+    googleAuth: Boolean(passport),
   })
 })
 
@@ -116,15 +104,21 @@ app.use((req, res) => {
 
 app.use((err, req, res, next) => {
   console.error('[Server Error]', err.stack || err)
+
   if (String(err.message || '').startsWith('CORS blocked for origin:')) {
     return res.status(403).json({ message: err.message })
   }
-  return res.status(500).json({ message: err.message || 'Internal server error' })
+
+  return res.status(500).json({
+    message: err.message || 'Internal server error',
+  })
 })
 
 async function startServer() {
   try {
-    if (!process.env.MONGODB_URI) throw new Error('MONGODB_URI is missing')
+    if (!process.env.MONGODB_URI) {
+      throw new Error('MONGODB_URI is missing')
+    }
 
     await mongoose.connect(process.env.MONGODB_URI)
     console.log('[DB] MongoDB connected')
@@ -137,8 +131,8 @@ async function startServer() {
 
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`[Server] Running on port ${PORT}`)
-      console.log('[Server] Allowed origins:', allowedOrigins)
       console.log('[Server] DATA_ROOT:', DATA_ROOT)
+      console.log('[Server] Allowed origins:', allowedOrigins)
     })
   } catch (err) {
     console.error('[Startup] Error:', err.message)
