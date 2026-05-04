@@ -11,11 +11,15 @@ const Music = require('../models/music-temp')
 const User = require('../models/User')
 const upload = require('../middleware/upload')
 const { authMiddleware, adminMiddleware, COOKIE_NAME } = require('../middleware/auth')
+const {
+  DATA_ROOT,
+  coversDir,
+  toStoredUrl,
+  toAbsolutePath,
+} = require('../config/storage')
 
-const BASE_DIR = path.join(__dirname, '..')
 const SYNC_SERVICE_URL = process.env.SYNC_SERVICE_URL || 'http://127.0.0.1:8001'
 
-const cleanRelativePath = (value = '') => String(value).replace(/^\/+/, '')
 const normalizeString = (value = '') => String(value || '').trim()
 
 const safeUnlink = (filePath) => {
@@ -146,6 +150,61 @@ const runPythonSyncFromLyrics = async (audioPath, lyricsText) => {
   return extractSyncPayload(data)
 }
 
+const resolveStoredFilePath = (storedUrl = '') => {
+  if (!storedUrl) return null
+  const full = toAbsolutePath(storedUrl)
+  return fs.existsSync(full) ? full : null
+}
+
+const getExtFromMime = (mime = '') => {
+  if (mime === 'image/png') return '.png'
+  if (mime === 'image/webp') return '.webp'
+  return '.jpg'
+}
+
+const downloadCoverFromUrl = async (coverUrl) => {
+  const url = normalizeString(coverUrl)
+  if (!url) return ''
+
+  let parsed
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new Error('Invalid cover URL')
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error('Cover URL must start with http or https')
+  }
+
+  const response = await axios.get(url, {
+    responseType: 'stream',
+    timeout: 1000 * 30,
+    maxContentLength: 10 * 1024 * 1024,
+    headers: {
+      'User-Agent': 'Mozilla/5.0 MusicAppBot',
+    },
+  })
+
+  const contentType = String(response.headers['content-type'] || '').split(';')[0].trim()
+  if (!['image/png', 'image/jpeg', 'image/jpg', 'image/webp'].includes(contentType)) {
+    throw new Error('Cover URL must point to PNG, JPG, JPEG, or WEBP image')
+  }
+
+  const ext = getExtFromMime(contentType)
+  const filename = `${Date.now()}-cover-url${ext}`
+  const filepath = path.join(coversDir, filename)
+
+  await new Promise((resolve, reject) => {
+    const writer = fs.createWriteStream(filepath)
+    response.data.pipe(writer)
+    writer.on('finish', resolve)
+    writer.on('error', reject)
+  })
+
+  return toStoredUrl('covers', filename)
+}
+
 const toSafeMusic = (music, extras = {}) => {
   const obj = music.toObject ? music.toObject() : { ...music }
 
@@ -201,6 +260,7 @@ const sendAudioStream = (req, res, filePath) => {
       'Accept-Ranges': 'bytes',
       'Content-Length': chunkSize,
       'Content-Type': contentType,
+      'Cache-Control': 'no-cache',
     })
 
     fs.createReadStream(filePath, { start, end: finalEnd }).pipe(res)
@@ -211,6 +271,7 @@ const sendAudioStream = (req, res, filePath) => {
     'Content-Length': fileSize,
     'Content-Type': contentType,
     'Accept-Ranges': 'bytes',
+    'Cache-Control': 'no-cache',
   })
 
   fs.createReadStream(filePath).pipe(res)
@@ -261,64 +322,14 @@ router.get('/:id/stream', async (req, res) => {
       return res.status(403).json({ message: 'Music is not available' })
     }
 
-    const filePath = path.join(BASE_DIR, cleanRelativePath(music.url))
-    if (!music.url || !fs.existsSync(filePath)) {
-      return res.status(404).json({ message: 'Audio file not found' })
+    const filePath = resolveStoredFilePath(music.url)
+    if (!filePath) {
+      return res.status(404).json({ message: 'Audio file not found', storedUrl: music.url })
     }
 
     sendAudioStream(req, res, filePath)
   } catch (err) {
     res.status(500).json({ message: 'Error streaming music', error: err.message })
-  }
-})
-
-router.patch('/:id/like', authMiddleware, async (req, res) => {
-  try {
-    const music = await Music.findById(req.params.id)
-    if (!music) return res.status(404).json({ message: 'Music not found' })
-
-    const musicId = String(music._id)
-    const alreadyLiked = (req.user.favourites || []).some((fav) => String(fav) === musicId)
-
-    if (alreadyLiked) {
-      req.user.favourites = req.user.favourites.filter((fav) => String(fav) !== musicId)
-      music.likeCount = Math.max(0, (music.likeCount || 0) - 1)
-    } else {
-      req.user.favourites.push(music._id)
-      music.likeCount = (music.likeCount || 0) + 1
-    }
-
-    await req.user.save()
-    await music.save()
-
-    res.json(serializeForUser(music, req.user))
-  } catch (err) {
-    res.status(500).json({ message: 'Error toggling like', error: err.message })
-  }
-})
-
-router.patch('/:id/download', authMiddleware, async (req, res) => {
-  try {
-    const music = await Music.findById(req.params.id)
-    if (!music) return res.status(404).json({ message: 'Music not found' })
-
-    const musicId = String(music._id)
-    const alreadyDownloaded = (req.user.downloaded || []).some((fav) => String(fav) === musicId)
-
-    if (alreadyDownloaded) {
-      req.user.downloaded = req.user.downloaded.filter((fav) => String(fav) !== musicId)
-      music.downloadCount = Math.max(0, (music.downloadCount || 0) - 1)
-    } else {
-      req.user.downloaded.push(music._id)
-      music.downloadCount = (music.downloadCount || 0) + 1
-    }
-
-    await req.user.save()
-    await music.save()
-
-    res.json(serializeForUser(music, req.user))
-  } catch (err) {
-    res.status(500).json({ message: 'Error toggling download', error: err.message })
   }
 })
 
@@ -331,6 +342,8 @@ router.post(
     { name: 'song', maxCount: 1 },
   ]),
   async (req, res) => {
+    let downloadedCoverUrl = ''
+
     try {
       const songFile = req.files?.song?.[0]
       if (!songFile) {
@@ -357,6 +370,16 @@ router.post(
 
       const normalizedSyncedLyricsRaw = normalizeString(req.body.syncedLyricsRaw)
       const syncedLyrics = parseSyncedLyrics(normalizedSyncedLyricsRaw)
+
+      let cover = req.files?.cover?.[0]
+        ? toStoredUrl('covers', req.files.cover[0].filename)
+        : ''
+
+      const coverUrl = normalizeString(req.body.coverUrl)
+      if (!cover && coverUrl) {
+        downloadedCoverUrl = await downloadCoverFromUrl(coverUrl)
+        cover = downloadedCoverUrl
+      }
 
       const music = new Music({
         title,
@@ -386,13 +409,18 @@ router.post(
         syncModel: normalizedSyncedLyricsRaw ? 'manual' : '',
         syncUpdatedAt: normalizedSyncedLyricsRaw ? new Date() : null,
         syncError: '',
-        cover: req.files?.cover?.[0] ? `/uploads/covers/${req.files.cover[0].filename}` : '',
-        url: `/uploads/songs/${songFile.filename}`,
+        cover,
+        url: toStoredUrl('songs', songFile.filename),
       })
 
       const savedMusic = await music.save()
       res.status(201).json(serializeForUser(savedMusic, req.user))
     } catch (err) {
+      if (downloadedCoverUrl) {
+        const absolute = resolveStoredFilePath(downloadedCoverUrl)
+        if (absolute) safeUnlink(absolute)
+      }
+
       console.error('[POST /api/music]', err)
       res.status(500).json({ message: 'Error saving music', error: err.message })
     }
@@ -408,6 +436,8 @@ router.put(
     { name: 'song', maxCount: 1 },
   ]),
   async (req, res) => {
+    let downloadedCoverUrl = ''
+
     try {
       const music = await Music.findById(req.params.id)
       if (!music) return res.status(404).json({ message: 'Music not found' })
@@ -437,9 +467,11 @@ router.put(
       if (req.body.isExplicit !== undefined) {
         music.isExplicit = normalizeBoolean(req.body.isExplicit, music.isExplicit)
       }
+
       if (req.body.isFeatured !== undefined) {
         music.isFeatured = normalizeBoolean(req.body.isFeatured, music.isFeatured)
       }
+
       if (req.body.isRecommended !== undefined) {
         music.isRecommended = normalizeBoolean(req.body.isRecommended, music.isRecommended)
       }
@@ -455,15 +487,22 @@ router.put(
       }
 
       if (req.files?.cover?.[0]) {
-        if (music.cover) safeUnlink(path.join(BASE_DIR, cleanRelativePath(music.cover)))
-        music.cover = `/uploads/covers/${req.files.cover[0].filename}`
+        const oldCoverPath = resolveStoredFilePath(music.cover)
+        if (oldCoverPath) safeUnlink(oldCoverPath)
+        music.cover = toStoredUrl('covers', req.files.cover[0].filename)
+      } else if (req.body.coverUrl !== undefined && normalizeString(req.body.coverUrl)) {
+        downloadedCoverUrl = await downloadCoverFromUrl(req.body.coverUrl)
+        const oldCoverPath = resolveStoredFilePath(music.cover)
+        if (oldCoverPath) safeUnlink(oldCoverPath)
+        music.cover = downloadedCoverUrl
       }
 
       if (req.files?.song?.[0]) {
-        if (music.url) safeUnlink(path.join(BASE_DIR, cleanRelativePath(music.url)))
+        const oldSongPath = resolveStoredFilePath(music.url)
+        if (oldSongPath) safeUnlink(oldSongPath)
 
         const newSongFile = req.files.song[0]
-        music.url = `/uploads/songs/${newSongFile.filename}`
+        music.url = toStoredUrl('songs', newSongFile.filename)
 
         try {
           const metadata = await mm.parseFile(newSongFile.path)
@@ -484,6 +523,11 @@ router.put(
       const updatedMusic = await music.save()
       res.json(serializeForUser(updatedMusic, req.user))
     } catch (err) {
+      if (downloadedCoverUrl) {
+        const absolute = resolveStoredFilePath(downloadedCoverUrl)
+        if (absolute) safeUnlink(absolute)
+      }
+
       console.error('[PUT /api/music/:id]', err)
       res.status(500).json({ message: 'Error updating music', error: err.message })
     }
@@ -497,9 +541,9 @@ router.post('/:id/generate-sync-from-lyrics', authMiddleware, adminMiddleware, a
     if (!music.url) return res.status(400).json({ message: 'Music file url not found' })
     if (!music.lyrics?.trim()) return res.status(400).json({ message: 'Lyrics text is required' })
 
-    const absoluteAudioPath = path.join(BASE_DIR, cleanRelativePath(music.url))
-    if (!fs.existsSync(absoluteAudioPath)) {
-      return res.status(400).json({ message: 'Audio file not found', path: absoluteAudioPath })
+    const absoluteAudioPath = resolveStoredFilePath(music.url)
+    if (!absoluteAudioPath) {
+      return res.status(400).json({ message: 'Audio file not found', storedUrl: music.url })
     }
 
     music.syncStatus = 'processing'
@@ -543,9 +587,13 @@ router.delete('/:id', authMiddleware, adminMiddleware, async (req, res) => {
     const music = await Music.findById(req.params.id)
     if (!music) return res.status(404).json({ message: 'Music not found' })
 
-    if (music.cover) safeUnlink(path.join(BASE_DIR, cleanRelativePath(music.cover)))
-    if (music.url) safeUnlink(path.join(BASE_DIR, cleanRelativePath(music.url)))
-    if (music.lrcFile) safeUnlink(path.join(BASE_DIR, cleanRelativePath(music.lrcFile)))
+    const coverPath = resolveStoredFilePath(music.cover)
+    const songPath = resolveStoredFilePath(music.url)
+    const lrcPath = resolveStoredFilePath(music.lrcFile)
+
+    if (coverPath) safeUnlink(coverPath)
+    if (songPath) safeUnlink(songPath)
+    if (lrcPath) safeUnlink(lrcPath)
 
     await Music.findByIdAndDelete(req.params.id)
 
