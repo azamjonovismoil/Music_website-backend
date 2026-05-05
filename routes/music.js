@@ -11,50 +11,174 @@ const {
   removeFromBucket,
 } = require('../config/storage')
 
+const ALLOWED_STATUS = ['draft', 'published', 'archived']
+const ALLOWED_VISIBILITY = ['public', 'unlisted', 'private']
+const ALLOWED_RELEASE_TYPES = ['single', 'ep', 'album-track', 'remix', 'live', 'instrumental']
+
 const parseBool = (v) => String(v).toLowerCase() === 'true'
 const parseNum = (v, d = 0) => {
   const n = Number(v)
   return Number.isFinite(n) ? n : d
 }
-const parseJsonField = (value) => {
-  if (Array.isArray(value)) return value
-  if (!value) return []
+const parseDate = (v) => (v ? new Date(v) : null)
+const parseJsonField = (v) => {
+  if (Array.isArray(v)) return v
+  if (!v) return []
   try {
-    return JSON.parse(value)
+    const parsed = JSON.parse(v)
+    return Array.isArray(parsed) ? parsed : []
   } catch {
-    return String(value).split(',').map((s) => s.trim()).filter(Boolean)
+    return String(v).split(',').map((x) => x.trim()).filter(Boolean)
   }
 }
-const parseDate = (value) => (value ? new Date(value) : null)
-const parseObject = (value, fallback = {}) => {
-  if (!value) return fallback
-  if (typeof value === 'object') return value
+const parseObject = (v, fallback = {}) => {
+  if (!v) return fallback
+  if (typeof v === 'object') return v
   try {
-    return JSON.parse(value)
+    return JSON.parse(v)
   } catch {
     return fallback
   }
 }
-const slugify = (s = '') =>
-  String(s)
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-
-const buildDoc = (doc, userId) => {
-  const obj = doc.toObject ? doc.toObject() : { ...doc }
-  const likedBy = obj.likedBy || []
-  const liked = userId ? likedBy.some((id) => String(id) === String(userId)) : false
-  const { likedBy: _lb, ...rest } = obj
-  return { ...rest, liked }
+const sanitizeEnum = (value, allowed, fallback) => {
+  const normalized = String(value || '').trim()
+  return allowed.includes(normalized) ? normalized : fallback
 }
+const slugify = (s = '') =>
+  String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 
 const canViewTrack = (track, user) => {
   if (!track) return false
-  if (track.status === 'published' && track.visibility !== 'private') return true
   if (user?.role === 'admin') return true
-  return false
+  return track.status === 'published' && track.visibility !== 'private'
+}
+
+const getHealth = (track) => {
+  const checks = [
+    !!String(track.title || '').trim(),
+    !!String(track.artist || '').trim(),
+    !!String(track.url || '').trim(),
+    !!String(track.cover || '').trim(),
+    Array.isArray(track.genre) && track.genre.length > 0,
+    !!String(track.lyrics || '').trim(),
+    !!String(track.syncedLyricsRaw || '').trim(),
+    !!(track.externalLinks && Object.values(track.externalLinks).some((v) => String(v || '').trim())),
+  ]
+  const score = Math.round((checks.filter(Boolean).length / checks.length) * 100)
+  let tier = 'basic'
+  if (score >= 90) tier = 'premium'
+  else if (score >= 70) tier = 'rich'
+  else if (score >= 45) tier = 'good'
+  return { score, tier }
+}
+
+const getAttentionReasons = (track) => {
+  const reasons = []
+  if (!track.cover) reasons.push('Missing cover')
+  if (!track.url) reasons.push('Missing audio')
+  if (track.status === 'draft') reasons.push('Still draft')
+  if (track.publishAt && new Date(track.publishAt) < new Date() && track.status !== 'published') reasons.push('Publish time passed')
+  if (track.lyrics && !track.syncedLyricsRaw) reasons.push('Lyrics without sync')
+  if ((track.likeCount || 0) >= 10 && track.status !== 'published') reasons.push('Popular but not published')
+  return reasons
+}
+
+const buildDoc = (doc, userId) => {
+  const obj = doc.toObject ? doc.toObject() : { ...doc }
+  const likedBy = Array.isArray(obj.likedBy) ? obj.likedBy : []
+  const liked = userId ? likedBy.some((id) => String(id) === String(userId)) : false
+  const health = getHealth(obj)
+  const attention = getAttentionReasons(obj)
+  delete obj.likedBy
+  return {
+    ...obj,
+    liked,
+    healthScore: health.score,
+    healthTier: health.tier,
+    needsAttention: attention.length > 0,
+    attentionReasons: attention,
+  }
+}
+
+const validatePublishable = (payload) => {
+  const errors = {}
+  if (!String(payload.title || '').trim()) errors.title = 'Title is required'
+  if (!String(payload.artist || '').trim()) errors.artist = 'Artist is required'
+  if (!String(payload.url || '').trim()) errors.song = 'Audio file is required'
+  if (!String(payload.cover || '').trim()) errors.cover = 'Cover is required for publishing'
+  if (!Array.isArray(payload.genre) || !payload.genre.length) errors.genre = 'At least one genre is required'
+  if (!String(payload.visibility || '').trim()) errors.visibility = 'Visibility is required'
+  return errors
+}
+
+const uploadToStorage = async ({ file, bucket, folder }) => {
+  const key = makeFileKey(folder, file.originalname)
+  return uploadBufferToBucket({
+    bucket,
+    key,
+    buffer: file.buffer,
+    contentType: file.mimetype,
+  })
+}
+
+const ensureUniqueSlug = async (rawSlug, excludeId = null) => {
+  const base = slugify(rawSlug || 'track')
+  let candidate = base || 'track'
+  let counter = 2
+  while (true) {
+    const existing = await Music.findOne({
+      slug: candidate,
+      ...(excludeId ? { _id: { $ne: excludeId } } : {}),
+    }).select('_id')
+    if (!existing) return candidate
+    candidate = `${base}-${counter++}`
+  }
+}
+
+const buildPayload = async (body, existing = {}, excludeId = null) => {
+  const title = body.title !== undefined ? String(body.title).trim() : existing.title
+  const rawSlug = body.slug !== undefined ? String(body.slug).trim() : existing.slug || slugify(title)
+
+  return {
+    title,
+    slug: await ensureUniqueSlug(rawSlug || title, excludeId),
+    artist: body.artist !== undefined ? String(body.artist).trim() : existing.artist,
+    author: body.author !== undefined ? String(body.author).trim() : existing.author,
+    composer: body.composer !== undefined ? String(body.composer).trim() : existing.composer,
+    producer: body.producer !== undefined ? String(body.producer).trim() : existing.producer,
+    featuredArtists: body.featuredArtists !== undefined ? parseJsonField(body.featuredArtists) : existing.featuredArtists,
+    album: body.album !== undefined ? String(body.album).trim() : existing.album,
+    trackNumber: body.trackNumber !== undefined ? parseNum(body.trackNumber) : existing.trackNumber,
+    discNumber: body.discNumber !== undefined ? parseNum(body.discNumber) : existing.discNumber,
+    version: body.version !== undefined ? String(body.version).trim() : existing.version,
+    genre: body.genre !== undefined ? parseJsonField(body.genre) : existing.genre,
+    mood: body.mood !== undefined ? parseJsonField(body.mood) : existing.mood,
+    tags: body.tags !== undefined ? parseJsonField(body.tags) : existing.tags,
+    language: body.language !== undefined ? String(body.language).trim() : existing.language,
+    lyricsLanguage: body.lyricsLanguage !== undefined ? String(body.lyricsLanguage).trim() : existing.lyricsLanguage,
+    country: body.country !== undefined ? String(body.country).trim() : existing.country,
+    releaseType: body.releaseType !== undefined ? sanitizeEnum(body.releaseType, ALLOWED_RELEASE_TYPES, 'single') : existing.releaseType,
+    visibility: body.visibility !== undefined ? sanitizeEnum(body.visibility, ALLOWED_VISIBILITY, 'public') : existing.visibility,
+    releaseDate: body.releaseDate !== undefined ? parseDate(body.releaseDate) : existing.releaseDate,
+    publishAt: body.publishAt !== undefined ? parseDate(body.publishAt) : existing.publishAt,
+    bio: body.bio !== undefined ? String(body.bio).trim() : existing.bio,
+    artistBio: body.artistBio !== undefined ? String(body.artistBio).trim() : existing.artistBio,
+    lyrics: body.lyrics !== undefined ? String(body.lyrics).trim() : existing.lyrics,
+    syncedLyricsRaw: body.syncedLyricsRaw !== undefined ? String(body.syncedLyricsRaw).trim() : existing.syncedLyricsRaw,
+    duration: body.duration !== undefined ? parseNum(body.duration) : existing.duration,
+    bpm: body.bpm !== undefined ? parseNum(body.bpm) : existing.bpm,
+    keySignature: body.keySignature !== undefined ? String(body.keySignature).trim() : existing.keySignature,
+    isrc: body.isrc !== undefined ? String(body.isrc).trim() : existing.isrc,
+    labelName: body.labelName !== undefined ? String(body.labelName).trim() : existing.labelName,
+    copyright: body.copyright !== undefined ? String(body.copyright).trim() : existing.copyright,
+    status: body.status !== undefined ? sanitizeEnum(body.status, ALLOWED_STATUS, 'draft') : existing.status,
+    isExplicit: body.isExplicit !== undefined ? parseBool(body.isExplicit) : existing.isExplicit,
+    isFeatured: body.isFeatured !== undefined ? parseBool(body.isFeatured) : existing.isFeatured,
+    isRecommended: body.isRecommended !== undefined ? parseBool(body.isRecommended) : existing.isRecommended,
+    isFreeDownload: body.isFreeDownload !== undefined ? parseBool(body.isFreeDownload) : existing.isFreeDownload,
+    adminNote: body.adminNote !== undefined ? String(body.adminNote).trim() : existing.adminNote,
+    externalLinks: body.externalLinks !== undefined ? parseObject(body.externalLinks, {}) : existing.externalLinks,
+  }
 }
 
 router.get('/', authMiddleware, async (req, res) => {
@@ -63,7 +187,6 @@ router.get('/', authMiddleware, async (req, res) => {
       status: 'published',
       visibility: { $in: ['public', 'unlisted'] },
     }).sort({ createdAt: -1 })
-
     res.json(tracks.map((t) => buildDoc(t, req.user?._id)))
   } catch (err) {
     res.status(500).json({ message: err.message })
@@ -79,29 +202,24 @@ router.get('/admin/all', authMiddleware, adminMiddleware, async (req, res) => {
   }
 })
 
-router.get('/me/liked', authMiddleware, async (req, res) => {
+router.get('/admin/summary', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const tracks = await Music.find({
-      likedBy: req.user._id,
-      status: 'published',
-      visibility: { $in: ['public', 'unlisted'] },
-    }).sort({ createdAt: -1 })
+    const tracks = await Music.find().sort({ createdAt: -1 })
+    const docs = tracks.map((t) => buildDoc(t, req.user?._id))
+    const attention = docs.filter((t) => t.needsAttention)
+    const avgHealth = docs.length ? Math.round(docs.reduce((s, t) => s + (t.healthScore || 0), 0) / docs.length) : 0
 
-    res.json(tracks.map((t) => buildDoc(t, req.user._id)))
-  } catch (err) {
-    res.status(500).json({ message: err.message })
-  }
-})
-
-router.get('/:id/stream', authMiddleware, async (req, res) => {
-  try {
-    const track = await Music.findById(req.params.id).select('url status visibility')
-    if (!track) return res.status(404).json({ message: 'Track not found' })
-    if (!canViewTrack(track, req.user)) return res.status(403).json({ message: 'Forbidden' })
-    if (!track.url) return res.status(404).json({ message: 'Audio not found' })
-
-    if (/^https?:\/\//i.test(track.url)) return res.redirect(302, track.url)
-    return res.status(404).json({ message: 'Invalid audio URL' })
+    res.json({
+      total: docs.length,
+      published: docs.filter((t) => t.status === 'published').length,
+      draft: docs.filter((t) => t.status === 'draft').length,
+      archived: docs.filter((t) => t.status === 'archived').length,
+      liked: docs.filter((t) => t.liked).length,
+      synced: docs.filter((t) => String(t.syncedLyricsRaw || '').trim()).length,
+      avgHealth,
+      attentionCount: attention.length,
+      attention: attention.slice(0, 8),
+    })
   } catch (err) {
     res.status(500).json({ message: err.message })
   }
@@ -127,102 +245,39 @@ router.post(
     try {
       const { body, files } = req
       const errors = {}
-
       if (!String(body.title || '').trim()) errors.title = 'Title is required'
       if (!String(body.artist || '').trim()) errors.artist = 'Artist is required'
       if (!files?.song?.[0]) errors.song = 'Audio file is required'
+      if (Object.keys(errors).length) return res.status(400).json({ message: 'Validation failed', errors })
 
-      if (Object.keys(errors).length) {
-        return res.status(400).json({ message: 'Validation failed', errors })
-      }
-
-      let coverUrl = String(body.coverUrl || '').trim()
+      const payload = await buildPayload(body)
+      let cover = String(body.coverUrl || '').trim()
       let coverStorageKey = ''
-      let audioUrl = ''
+      let url = ''
       let audioStorageKey = ''
 
-      if (files.cover?.[0]) {
-        const f = files.cover[0]
-        const key = makeFileKey('covers', f.originalname)
-        const r = await uploadBufferToBucket({
-          bucket: COVERS_BUCKET,
-          key,
-          buffer: f.buffer,
-          contentType: f.mimetype,
-        })
-        coverUrl = r.url
-        coverStorageKey = r.path
+      if (files?.cover?.[0]) {
+        const uploaded = await uploadToStorage({ file: files.cover[0], bucket: COVERS_BUCKET, folder: 'covers' })
+        cover = uploaded.url
+        coverStorageKey = uploaded.path
       }
 
-      if (files.song?.[0]) {
-        const f = files.song[0]
-        const key = makeFileKey('songs', f.originalname)
-        const r = await uploadBufferToBucket({
-          bucket: SONGS_BUCKET,
-          key,
-          buffer: f.buffer,
-          contentType: f.mimetype,
-        })
-        audioUrl = r.url
-        audioStorageKey = r.path
+      if (files?.song?.[0]) {
+        const uploaded = await uploadToStorage({ file: files.song[0], bucket: SONGS_BUCKET, folder: 'songs' })
+        url = uploaded.url
+        audioStorageKey = uploaded.path
       }
 
-      const track = await Music.create({
-        title: String(body.title).trim(),
-        slug: String(body.slug || '').trim() || slugify(body.title),
-        artist: String(body.artist).trim(),
-        author: String(body.author || '').trim(),
-        composer: String(body.composer || '').trim(),
-        producer: String(body.producer || '').trim(),
-        featuredArtists: parseJsonField(body.featuredArtists),
+      const finalPayload = { ...payload, cover, coverStorageKey, url, audioStorageKey }
 
-        album: String(body.album || '').trim(),
-        trackNumber: parseNum(body.trackNumber),
-        discNumber: parseNum(body.discNumber),
-        version: String(body.version || '').trim(),
+      if (finalPayload.status === 'published') {
+        const publishErrors = validatePublishable(finalPayload)
+        if (Object.keys(publishErrors).length) {
+          return res.status(400).json({ message: 'Publish requirements not met', errors: publishErrors })
+        }
+      }
 
-        genre: parseJsonField(body.genre),
-        mood: parseJsonField(body.mood),
-        tags: parseJsonField(body.tags),
-
-        language: String(body.language || '').trim(),
-        lyricsLanguage: String(body.lyricsLanguage || '').trim(),
-        country: String(body.country || '').trim(),
-
-        releaseType: String(body.releaseType || 'single').trim(),
-        visibility: String(body.visibility || 'public').trim(),
-
-        releaseDate: parseDate(body.releaseDate),
-        publishAt: parseDate(body.publishAt),
-
-        bio: String(body.bio || '').trim(),
-        artistBio: String(body.artistBio || '').trim(),
-        lyrics: String(body.lyrics || '').trim(),
-        syncedLyricsRaw: String(body.syncedLyricsRaw || '').trim(),
-
-        cover: coverUrl,
-        coverStorageKey,
-        url: audioUrl,
-        audioStorageKey,
-
-        duration: parseNum(body.duration),
-        bpm: parseNum(body.bpm),
-        keySignature: String(body.keySignature || '').trim(),
-        isrc: String(body.isrc || '').trim(),
-
-        labelName: String(body.labelName || '').trim(),
-        copyright: String(body.copyright || '').trim(),
-
-        status: String(body.status || 'draft').trim(),
-        isExplicit: parseBool(body.isExplicit),
-        isFeatured: parseBool(body.isFeatured),
-        isRecommended: parseBool(body.isRecommended),
-        isFreeDownload: parseBool(body.isFreeDownload),
-
-        adminNote: String(body.adminNote || '').trim(),
-        externalLinks: parseObject(body.externalLinks, {}),
-      })
-
+      const track = await Music.create(finalPayload)
       res.status(201).json(buildDoc(track, req.user?._id))
     } catch (err) {
       console.error('[Music POST]', err)
@@ -241,73 +296,38 @@ router.put(
       const track = await Music.findById(req.params.id)
       if (!track) return res.status(404).json({ message: 'Track not found' })
 
-      const { body, files } = req
       const oldCoverKey = track.coverStorageKey
       const oldAudioKey = track.audioStorageKey
 
-      if (files?.cover?.[0]) {
-        const f = files.cover[0]
-        const key = makeFileKey('covers', f.originalname)
-        const r = await uploadBufferToBucket({
-          bucket: COVERS_BUCKET,
-          key,
-          buffer: f.buffer,
-          contentType: f.mimetype,
-        })
-        track.cover = r.url
-        track.coverStorageKey = r.path
-      } else if (body.coverUrl !== undefined) {
-        track.cover = String(body.coverUrl || '').trim()
+      Object.assign(track, await buildPayload(req.body, track, track._id))
+
+      if (req.files?.cover?.[0]) {
+        const uploaded = await uploadToStorage({ file: req.files.cover[0], bucket: COVERS_BUCKET, folder: 'covers' })
+        track.cover = uploaded.url
+        track.coverStorageKey = uploaded.path
+      } else if (req.body.coverUrl !== undefined) {
+        track.cover = String(req.body.coverUrl || '').trim()
       }
 
-      if (files?.song?.[0]) {
-        const f = files.song[0]
-        const key = makeFileKey('songs', f.originalname)
-        const r = await uploadBufferToBucket({
-          bucket: SONGS_BUCKET,
-          key,
-          buffer: f.buffer,
-          contentType: f.mimetype,
-        })
-        track.url = r.url
-        track.audioStorageKey = r.path
+      if (req.files?.song?.[0]) {
+        const uploaded = await uploadToStorage({ file: req.files.song[0], bucket: SONGS_BUCKET, folder: 'songs' })
+        track.url = uploaded.url
+        track.audioStorageKey = uploaded.path
       }
 
-      const stringFields = [
-        'title', 'slug', 'artist', 'author', 'composer', 'producer',
-        'album', 'version', 'language', 'lyricsLanguage', 'country',
-        'bio', 'artistBio', 'lyrics', 'syncedLyricsRaw', 'keySignature',
-        'isrc', 'labelName', 'copyright', 'status', 'releaseType',
-        'visibility', 'adminNote'
-      ]
-
-      for (const f of stringFields) {
-        if (body[f] !== undefined) track[f] = String(body[f] || '').trim()
+      if (track.status === 'published') {
+        const publishErrors = validatePublishable(track)
+        if (Object.keys(publishErrors).length) {
+          return res.status(400).json({ message: 'Publish requirements not met', errors: publishErrors })
+        }
       }
-
-      for (const f of ['featuredArtists', 'genre', 'mood', 'tags']) {
-        if (body[f] !== undefined) track[f] = parseJsonField(body[f])
-      }
-
-      for (const f of ['isExplicit', 'isFeatured', 'isRecommended', 'isFreeDownload']) {
-        if (body[f] !== undefined) track[f] = parseBool(body[f])
-      }
-
-      if (body.trackNumber !== undefined) track.trackNumber = parseNum(body.trackNumber)
-      if (body.discNumber !== undefined) track.discNumber = parseNum(body.discNumber)
-      if (body.duration !== undefined) track.duration = parseNum(body.duration)
-      if (body.bpm !== undefined) track.bpm = parseNum(body.bpm)
-
-      if (body.releaseDate !== undefined) track.releaseDate = parseDate(body.releaseDate)
-      if (body.publishAt !== undefined) track.publishAt = parseDate(body.publishAt)
-      if (body.externalLinks !== undefined) track.externalLinks = parseObject(body.externalLinks, {})
 
       await track.save()
 
-      if (files?.cover?.[0] && oldCoverKey) {
+      if (req.files?.cover?.[0] && oldCoverKey) {
         await removeFromBucket({ bucket: COVERS_BUCKET, key: oldCoverKey }).catch(() => { })
       }
-      if (files?.song?.[0] && oldAudioKey) {
+      if (req.files?.song?.[0] && oldAudioKey) {
         await removeFromBucket({ bucket: SONGS_BUCKET, key: oldAudioKey }).catch(() => { })
       }
 
@@ -319,19 +339,38 @@ router.put(
   }
 )
 
-router.delete('/:id', authMiddleware, adminMiddleware, async (req, res) => {
+router.patch('/:id/archive', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const track = await Music.findByIdAndDelete(req.params.id)
+    const track = await Music.findById(req.params.id)
     if (!track) return res.status(404).json({ message: 'Track not found' })
+    track.status = 'archived'
+    await track.save()
+    res.json(buildDoc(track, req.user?._id))
+  } catch (err) {
+    res.status(500).json({ message: err.message })
+  }
+})
 
-    if (track.coverStorageKey) {
-      await removeFromBucket({ bucket: COVERS_BUCKET, key: track.coverStorageKey }).catch(() => { })
-    }
-    if (track.audioStorageKey) {
-      await removeFromBucket({ bucket: SONGS_BUCKET, key: track.audioStorageKey }).catch(() => { })
-    }
+router.post('/:id/clone', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const source = await Music.findById(req.params.id)
+    if (!source) return res.status(404).json({ message: 'Track not found' })
 
-    res.json({ message: 'Track deleted successfully' })
+    const raw = source.toObject()
+    delete raw._id
+    delete raw.createdAt
+    delete raw.updatedAt
+    delete raw.likedBy
+    delete raw.likeCount
+    delete raw.playCount
+    delete raw.downloadCount
+
+    raw.title = `${source.title} Copy`
+    raw.slug = await ensureUniqueSlug(`${source.slug || slugify(source.title)}-copy`)
+    raw.status = 'draft'
+
+    const cloned = await Music.create(raw)
+    res.status(201).json(buildDoc(cloned, req.user?._id))
   } catch (err) {
     res.status(500).json({ message: err.message })
   }
@@ -355,9 +394,8 @@ router.patch('/:id/like', authMiddleware, async (req, res) => {
     }
 
     await track.save()
-    res.json(buildDoc(track, req.user._id))
+    res.json(buildDoc(track, req.user?._id))
   } catch (err) {
-    console.error('[Like]', err)
     res.status(500).json({ message: err.message })
   }
 })
@@ -367,10 +405,8 @@ router.patch('/:id/download', authMiddleware, async (req, res) => {
     const track = await Music.findById(req.params.id)
     if (!track) return res.status(404).json({ message: 'Track not found' })
     if (!canViewTrack(track, req.user)) return res.status(403).json({ message: 'Forbidden' })
-
     track.downloadCount = (track.downloadCount || 0) + 1
     await track.save()
-
     res.json(buildDoc(track, req.user?._id))
   } catch (err) {
     res.status(500).json({ message: err.message })
@@ -382,10 +418,8 @@ router.patch('/:id/play', authMiddleware, async (req, res) => {
     const track = await Music.findById(req.params.id)
     if (!track) return res.status(404).json({ message: 'Track not found' })
     if (!canViewTrack(track, req.user)) return res.status(403).json({ message: 'Forbidden' })
-
     track.playCount = (track.playCount || 0) + 1
     await track.save()
-
     res.json({ ok: true })
   } catch (err) {
     res.status(500).json({ message: err.message })
