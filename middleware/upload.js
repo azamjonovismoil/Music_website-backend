@@ -1,6 +1,12 @@
 const multer = require('multer')
 
-const IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp']
+const IMAGE_MIMES = [
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/webp',
+]
+
 const AUDIO_MIMES = [
   'audio/mpeg',
   'audio/mp3',
@@ -10,6 +16,7 @@ const AUDIO_MIMES = [
   'audio/x-m4a',
   'audio/aac',
   'audio/flac',
+  'audio/x-flac',
 ]
 
 const storage = multer.memoryStorage()
@@ -24,7 +31,7 @@ function fileFilter(req, file, cb) {
 
   if (file.fieldname === 'song') {
     if (!AUDIO_MIMES.includes(file.mimetype)) {
-      return cb(new Error('Only MP3, WAV, M4A, AAC, FLAC allowed for audio'))
+      return cb(new Error(`Unsupported audio mime: ${file.mimetype}`))
     }
     return cb(null, true)
   }

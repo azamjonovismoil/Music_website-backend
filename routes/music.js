@@ -16,12 +16,18 @@ const ALLOWED_VISIBILITY = ['public', 'unlisted', 'private']
 const ALLOWED_RELEASE_TYPES = ['single', 'ep', 'album-track', 'remix', 'live', 'instrumental']
 
 const parseBool = (v) => String(v).toLowerCase() === 'true'
+
 const parseNum = (v, d = 0) => {
   if (v === '' || v === null || v === undefined) return d
   const n = Number(v)
   return Number.isFinite(n) ? n : d
 }
-const parseDate = (v) => (v ? new Date(v) : null)
+
+const parseDate = (v) => {
+  if (!v) return null
+  const d = new Date(v)
+  return Number.isNaN(d.getTime()) ? null : d
+}
 
 const parseJsonField = (v) => {
   if (Array.isArray(v)) return v
@@ -68,23 +74,29 @@ const getHealth = (track) => {
     !!String(track.lyrics || '').trim(),
     !!String(track.syncedLyricsRaw || '').trim(),
     !!(track.externalLinks && Object.values(track.externalLinks).some((v) => String(v || '').trim())),
+    !!String(track.visibility || '').trim(),
   ]
+
   const score = Math.round((checks.filter(Boolean).length / checks.length) * 100)
+
   let tier = 'basic'
   if (score >= 90) tier = 'premium'
   else if (score >= 70) tier = 'rich'
   else if (score >= 45) tier = 'good'
+
   return { score, tier }
 }
 
 const getAttentionReasons = (track) => {
   const reasons = []
+
   if (!track.cover) reasons.push('Missing cover')
   if (!track.url) reasons.push('Missing audio')
   if (track.status === 'draft') reasons.push('Still draft')
   if (track.publishAt && new Date(track.publishAt) < new Date() && track.status !== 'published') reasons.push('Publish time passed')
   if (track.lyrics && !track.syncedLyricsRaw) reasons.push('Lyrics without sync')
   if ((track.likeCount || 0) >= 10 && track.status !== 'published') reasons.push('Popular but not published')
+
   return reasons
 }
 
@@ -94,6 +106,7 @@ const buildDoc = (doc, userId) => {
   const liked = userId ? likedBy.some((id) => String(id) === String(userId)) : false
   const health = getHealth(obj)
   const attention = getAttentionReasons(obj)
+
   delete obj.likedBy
 
   return {
@@ -121,12 +134,14 @@ const validateBase = ({ body, files, isCreate = false }) => {
 
 const validatePublishable = (payload) => {
   const errors = {}
+
   if (!String(payload.title || '').trim()) errors.title = 'Title is required'
   if (!String(payload.artist || '').trim()) errors.artist = 'Artist is required'
   if (!String(payload.url || '').trim()) errors.song = 'Audio file is required'
   if (!String(payload.cover || '').trim()) errors.cover = 'Cover is required for publishing'
   if (!Array.isArray(payload.genre) || !payload.genre.length) errors.genre = 'At least one genre is required'
   if (!String(payload.visibility || '').trim()) errors.visibility = 'Visibility is required'
+
   return errors
 }
 
@@ -249,6 +264,16 @@ router.get('/admin/summary', authMiddleware, adminMiddleware, async (req, res) =
   } catch (err) {
     console.error('[Music GET /admin/summary]', err)
     res.status(500).json({ message: 'Failed to fetch summary' })
+  }
+})
+
+router.get('/me/liked', authMiddleware, async (req, res) => {
+  try {
+    const tracks = await Music.find({ likedBy: req.user._id }).sort({ createdAt: -1 })
+    res.json(tracks.map((t) => buildDoc(t, req.user?._id)))
+  } catch (err) {
+    console.error('[Music GET /me/liked]', err)
+    res.status(500).json({ message: 'Failed to fetch liked tracks' })
   }
 })
 
@@ -456,7 +481,8 @@ router.patch('/:id/like', authMiddleware, async (req, res) => {
     if (!canViewTrack(track, req.user)) return res.status(403).json({ message: 'Forbidden' })
 
     const userId = String(req.user._id)
-    const idx = (track.likedBy || []).findIndex((id) => String(id) === userId)
+    const likedBy = Array.isArray(track.likedBy) ? track.likedBy : []
+    const idx = likedBy.findIndex((id) => String(id) === userId)
 
     if (idx === -1) {
       track.likedBy.push(req.user._id)
@@ -479,6 +505,7 @@ router.patch('/:id/download', authMiddleware, async (req, res) => {
     const track = await Music.findById(req.params.id)
     if (!track) return res.status(404).json({ message: 'Track not found' })
     if (!canViewTrack(track, req.user)) return res.status(403).json({ message: 'Forbidden' })
+
     track.downloadCount = (track.downloadCount || 0) + 1
     await track.save()
     res.json(buildDoc(track, req.user?._id))
@@ -493,6 +520,7 @@ router.patch('/:id/play', authMiddleware, async (req, res) => {
     const track = await Music.findById(req.params.id)
     if (!track) return res.status(404).json({ message: 'Track not found' })
     if (!canViewTrack(track, req.user)) return res.status(403).json({ message: 'Forbidden' })
+
     track.playCount = (track.playCount || 0) + 1
     await track.save()
     res.json({ ok: true })

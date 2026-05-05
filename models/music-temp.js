@@ -15,7 +15,7 @@ const externalLinksSchema = new mongoose.Schema(
 const musicSchema = new mongoose.Schema(
   {
     title: { type: String, required: true, trim: true },
-    slug: { type: String, trim: true, index: true, default: '' },
+    slug: { type: String, trim: true, index: true, unique: true, sparse: true },
 
     artist: { type: String, required: true, trim: true },
     author: { type: String, trim: true, default: '' },
@@ -24,8 +24,8 @@ const musicSchema = new mongoose.Schema(
     featuredArtists: [{ type: String, trim: true }],
 
     album: { type: String, trim: true, default: '' },
-    trackNumber: { type: Number, default: 0 },
-    discNumber: { type: Number, default: 0 },
+    trackNumber: { type: Number, default: 0, min: 0 },
+    discNumber: { type: Number, default: 0, min: 0 },
     version: { type: String, trim: true, default: '' },
 
     genre: [{ type: String, trim: true }],
@@ -60,8 +60,8 @@ const musicSchema = new mongoose.Schema(
     url: { type: String, trim: true, default: '' },
     audioStorageKey: { type: String, trim: true, default: '' },
 
-    duration: { type: Number, default: 0 },
-    bpm: { type: Number, default: 0 },
+    duration: { type: Number, default: 0, min: 0 },
+    bpm: { type: Number, default: 0, min: 0 },
     keySignature: { type: String, trim: true, default: '' },
     isrc: { type: String, trim: true, default: '' },
 
@@ -88,14 +88,14 @@ const musicSchema = new mongoose.Schema(
     },
 
     likedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
-    likeCount: { type: Number, default: 0 },
-    playCount: { type: Number, default: 0 },
-    downloadCount: { type: Number, default: 0 },
+    likeCount: { type: Number, default: 0, min: 0 },
+    playCount: { type: Number, default: 0, min: 0 },
+    downloadCount: { type: Number, default: 0, min: 0 },
   },
   { timestamps: true }
 )
 
 musicSchema.index({ title: 1, artist: 1 })
-musicSchema.index({ slug: 1 })
+musicSchema.index({ status: 1, visibility: 1, createdAt: -1 })
 
 module.exports = mongoose.model('Music', musicSchema)

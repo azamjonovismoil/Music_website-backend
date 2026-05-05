@@ -13,6 +13,8 @@ const playlistsRouter = require('./routes/playlists')
 const app = express()
 const PORT = process.env.PORT || 5000
 
+app.set('trust proxy', 1)
+
 let passport = null
 try {
   passport = require('./utils/googleAuth')

@@ -18,7 +18,7 @@ const sanitizeBaseName = (filename = 'file') => {
 }
 
 const makeFileKey = (folder, originalname = 'file') => {
-  const ext = path.extname(originalname || '').toLowerCase()
+  const ext = path.extname(originalname || '').toLowerCase() || ''
   const safe = sanitizeBaseName(originalname)
   const rand = crypto.randomBytes(6).toString('hex')
   return `${folder}/${Date.now()}-${rand}-${safe}${ext}`
@@ -30,20 +30,26 @@ const uploadBufferToBucket = async ({ bucket, key, buffer, contentType }) => {
     upsert: false,
   })
 
-  if (error) throw error
+  if (error) {
+    throw new Error(`[Storage upload] ${bucket}/${key}: ${error.message}`)
+  }
 
   const { data } = supabase.storage.from(bucket).getPublicUrl(key)
 
   return {
     path: key,
-    url: data.publicUrl,
+    url: data?.publicUrl || '',
   }
 }
 
 const removeFromBucket = async ({ bucket, key }) => {
   if (!key) return
+
   const { error } = await supabase.storage.from(bucket).remove([key])
-  if (error) throw error
+
+  if (error) {
+    throw new Error(`[Storage remove] ${bucket}/${key}: ${error.message}`)
+  }
 }
 
 module.exports = {
