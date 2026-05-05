@@ -17,10 +17,12 @@ const ALLOWED_RELEASE_TYPES = ['single', 'ep', 'album-track', 'remix', 'live', '
 
 const parseBool = (v) => String(v).toLowerCase() === 'true'
 const parseNum = (v, d = 0) => {
+  if (v === '' || v === null || v === undefined) return d
   const n = Number(v)
   return Number.isFinite(n) ? n : d
 }
 const parseDate = (v) => (v ? new Date(v) : null)
+
 const parseJsonField = (v) => {
   if (Array.isArray(v)) return v
   if (!v) return []
@@ -31,6 +33,7 @@ const parseJsonField = (v) => {
     return String(v).split(',').map((x) => x.trim()).filter(Boolean)
   }
 }
+
 const parseObject = (v, fallback = {}) => {
   if (!v) return fallback
   if (typeof v === 'object') return v
@@ -40,10 +43,12 @@ const parseObject = (v, fallback = {}) => {
     return fallback
   }
 }
+
 const sanitizeEnum = (value, allowed, fallback) => {
   const normalized = String(value || '').trim()
   return allowed.includes(normalized) ? normalized : fallback
 }
+
 const slugify = (s = '') =>
   String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 
@@ -90,6 +95,7 @@ const buildDoc = (doc, userId) => {
   const health = getHealth(obj)
   const attention = getAttentionReasons(obj)
   delete obj.likedBy
+
   return {
     ...obj,
     liked,
@@ -98,6 +104,19 @@ const buildDoc = (doc, userId) => {
     needsAttention: attention.length > 0,
     attentionReasons: attention,
   }
+}
+
+const validateBase = ({ body, files, isCreate = false }) => {
+  const errors = {}
+
+  if (!String(body.title || '').trim()) errors.title = 'Title is required'
+  if (!String(body.artist || '').trim()) errors.artist = 'Artist is required'
+
+  if (isCreate && !files?.song?.[0]) {
+    errors.song = 'Audio file is required'
+  }
+
+  return errors
 }
 
 const validatePublishable = (payload) => {
@@ -122,16 +141,18 @@ const uploadToStorage = async ({ file, bucket, folder }) => {
 }
 
 const ensureUniqueSlug = async (rawSlug, excludeId = null) => {
-  const base = slugify(rawSlug || 'track')
-  let candidate = base || 'track'
+  const normalizedBase = slugify(rawSlug || 'track') || 'track'
+  let candidate = normalizedBase
   let counter = 2
+
   while (true) {
     const existing = await Music.findOne({
       slug: candidate,
       ...(excludeId ? { _id: { $ne: excludeId } } : {}),
     }).select('_id')
+
     if (!existing) return candidate
-    candidate = `${base}-${counter++}`
+    candidate = `${normalizedBase}-${counter++}`
   }
 }
 
@@ -148,8 +169,8 @@ const buildPayload = async (body, existing = {}, excludeId = null) => {
     producer: body.producer !== undefined ? String(body.producer).trim() : existing.producer,
     featuredArtists: body.featuredArtists !== undefined ? parseJsonField(body.featuredArtists) : existing.featuredArtists,
     album: body.album !== undefined ? String(body.album).trim() : existing.album,
-    trackNumber: body.trackNumber !== undefined ? parseNum(body.trackNumber) : existing.trackNumber,
-    discNumber: body.discNumber !== undefined ? parseNum(body.discNumber) : existing.discNumber,
+    trackNumber: body.trackNumber !== undefined ? parseNum(body.trackNumber, 0) : existing.trackNumber,
+    discNumber: body.discNumber !== undefined ? parseNum(body.discNumber, 0) : existing.discNumber,
     version: body.version !== undefined ? String(body.version).trim() : existing.version,
     genre: body.genre !== undefined ? parseJsonField(body.genre) : existing.genre,
     mood: body.mood !== undefined ? parseJsonField(body.mood) : existing.mood,
@@ -165,8 +186,8 @@ const buildPayload = async (body, existing = {}, excludeId = null) => {
     artistBio: body.artistBio !== undefined ? String(body.artistBio).trim() : existing.artistBio,
     lyrics: body.lyrics !== undefined ? String(body.lyrics).trim() : existing.lyrics,
     syncedLyricsRaw: body.syncedLyricsRaw !== undefined ? String(body.syncedLyricsRaw).trim() : existing.syncedLyricsRaw,
-    duration: body.duration !== undefined ? parseNum(body.duration) : existing.duration,
-    bpm: body.bpm !== undefined ? parseNum(body.bpm) : existing.bpm,
+    duration: body.duration !== undefined ? parseNum(body.duration, 0) : existing.duration,
+    bpm: body.bpm !== undefined ? parseNum(body.bpm, 0) : existing.bpm,
     keySignature: body.keySignature !== undefined ? String(body.keySignature).trim() : existing.keySignature,
     isrc: body.isrc !== undefined ? String(body.isrc).trim() : existing.isrc,
     labelName: body.labelName !== undefined ? String(body.labelName).trim() : existing.labelName,
@@ -187,9 +208,11 @@ router.get('/', authMiddleware, async (req, res) => {
       status: 'published',
       visibility: { $in: ['public', 'unlisted'] },
     }).sort({ createdAt: -1 })
+
     res.json(tracks.map((t) => buildDoc(t, req.user?._id)))
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    console.error('[Music GET /]', err)
+    res.status(500).json({ message: 'Failed to fetch tracks' })
   }
 })
 
@@ -198,7 +221,8 @@ router.get('/admin/all', authMiddleware, adminMiddleware, async (req, res) => {
     const tracks = await Music.find().sort({ createdAt: -1 })
     res.json(tracks.map((t) => buildDoc(t, req.user?._id)))
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    console.error('[Music GET /admin/all]', err)
+    res.status(500).json({ message: 'Failed to fetch admin tracks' })
   }
 })
 
@@ -207,7 +231,9 @@ router.get('/admin/summary', authMiddleware, adminMiddleware, async (req, res) =
     const tracks = await Music.find().sort({ createdAt: -1 })
     const docs = tracks.map((t) => buildDoc(t, req.user?._id))
     const attention = docs.filter((t) => t.needsAttention)
-    const avgHealth = docs.length ? Math.round(docs.reduce((s, t) => s + (t.healthScore || 0), 0) / docs.length) : 0
+    const avgHealth = docs.length
+      ? Math.round(docs.reduce((s, t) => s + (t.healthScore || 0), 0) / docs.length)
+      : 0
 
     res.json({
       total: docs.length,
@@ -221,7 +247,8 @@ router.get('/admin/summary', authMiddleware, adminMiddleware, async (req, res) =
       attention: attention.slice(0, 8),
     })
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    console.error('[Music GET /admin/summary]', err)
+    res.status(500).json({ message: 'Failed to fetch summary' })
   }
 })
 
@@ -232,7 +259,8 @@ router.get('/:id', authMiddleware, async (req, res) => {
     if (!canViewTrack(track, req.user)) return res.status(403).json({ message: 'Forbidden' })
     res.json(buildDoc(track, req.user?._id))
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    console.error('[Music GET /:id]', err)
+    res.status(500).json({ message: 'Failed to fetch track' })
   }
 })
 
@@ -242,37 +270,55 @@ router.post(
   adminMiddleware,
   upload.fields([{ name: 'cover', maxCount: 1 }, { name: 'song', maxCount: 1 }]),
   async (req, res) => {
+    let uploadedCoverKey = ''
+    let uploadedSongKey = ''
+
     try {
       const { body, files } = req
-      const errors = {}
-      if (!String(body.title || '').trim()) errors.title = 'Title is required'
-      if (!String(body.artist || '').trim()) errors.artist = 'Artist is required'
-      if (!files?.song?.[0]) errors.song = 'Audio file is required'
-      if (Object.keys(errors).length) return res.status(400).json({ message: 'Validation failed', errors })
+
+      const baseErrors = validateBase({ body, files, isCreate: true })
+      if (Object.keys(baseErrors).length) {
+        return res.status(400).json({ message: 'Validation failed', errors: baseErrors })
+      }
 
       const payload = await buildPayload(body)
+
       let cover = String(body.coverUrl || '').trim()
-      let coverStorageKey = ''
       let url = ''
-      let audioStorageKey = ''
 
       if (files?.cover?.[0]) {
-        const uploaded = await uploadToStorage({ file: files.cover[0], bucket: COVERS_BUCKET, folder: 'covers' })
+        const uploaded = await uploadToStorage({
+          file: files.cover[0],
+          bucket: COVERS_BUCKET,
+          folder: 'covers',
+        })
         cover = uploaded.url
-        coverStorageKey = uploaded.path
+        uploadedCoverKey = uploaded.path
       }
 
       if (files?.song?.[0]) {
-        const uploaded = await uploadToStorage({ file: files.song[0], bucket: SONGS_BUCKET, folder: 'songs' })
+        const uploaded = await uploadToStorage({
+          file: files.song[0],
+          bucket: SONGS_BUCKET,
+          folder: 'songs',
+        })
         url = uploaded.url
-        audioStorageKey = uploaded.path
+        uploadedSongKey = uploaded.path
       }
 
-      const finalPayload = { ...payload, cover, coverStorageKey, url, audioStorageKey }
+      const finalPayload = {
+        ...payload,
+        cover,
+        coverStorageKey: uploadedCoverKey,
+        url,
+        audioStorageKey: uploadedSongKey,
+      }
 
       if (finalPayload.status === 'published') {
         const publishErrors = validatePublishable(finalPayload)
         if (Object.keys(publishErrors).length) {
+          if (uploadedCoverKey) await removeFromBucket({ bucket: COVERS_BUCKET, key: uploadedCoverKey }).catch(() => { })
+          if (uploadedSongKey) await removeFromBucket({ bucket: SONGS_BUCKET, key: uploadedSongKey }).catch(() => { })
           return res.status(400).json({ message: 'Publish requirements not met', errors: publishErrors })
         }
       }
@@ -281,7 +327,13 @@ router.post(
       res.status(201).json(buildDoc(track, req.user?._id))
     } catch (err) {
       console.error('[Music POST]', err)
-      res.status(500).json({ message: err.message })
+
+      if (uploadedCoverKey) await removeFromBucket({ bucket: COVERS_BUCKET, key: uploadedCoverKey }).catch(() => { })
+      if (uploadedSongKey) await removeFromBucket({ bucket: SONGS_BUCKET, key: uploadedSongKey }).catch(() => { })
+
+      res.status(500).json({
+        message: err.message || 'Failed to create track',
+      })
     }
   }
 )
@@ -292,6 +344,9 @@ router.put(
   adminMiddleware,
   upload.fields([{ name: 'cover', maxCount: 1 }, { name: 'song', maxCount: 1 }]),
   async (req, res) => {
+    let newCoverKey = ''
+    let newSongKey = ''
+
     try {
       const track = await Music.findById(req.params.id)
       if (!track) return res.status(404).json({ message: 'Track not found' })
@@ -302,39 +357,55 @@ router.put(
       Object.assign(track, await buildPayload(req.body, track, track._id))
 
       if (req.files?.cover?.[0]) {
-        const uploaded = await uploadToStorage({ file: req.files.cover[0], bucket: COVERS_BUCKET, folder: 'covers' })
+        const uploaded = await uploadToStorage({
+          file: req.files.cover[0],
+          bucket: COVERS_BUCKET,
+          folder: 'covers',
+        })
         track.cover = uploaded.url
         track.coverStorageKey = uploaded.path
+        newCoverKey = uploaded.path
       } else if (req.body.coverUrl !== undefined) {
         track.cover = String(req.body.coverUrl || '').trim()
       }
 
       if (req.files?.song?.[0]) {
-        const uploaded = await uploadToStorage({ file: req.files.song[0], bucket: SONGS_BUCKET, folder: 'songs' })
+        const uploaded = await uploadToStorage({
+          file: req.files.song[0],
+          bucket: SONGS_BUCKET,
+          folder: 'songs',
+        })
         track.url = uploaded.url
         track.audioStorageKey = uploaded.path
+        newSongKey = uploaded.path
       }
 
       if (track.status === 'published') {
         const publishErrors = validatePublishable(track)
         if (Object.keys(publishErrors).length) {
+          if (newCoverKey) await removeFromBucket({ bucket: COVERS_BUCKET, key: newCoverKey }).catch(() => { })
+          if (newSongKey) await removeFromBucket({ bucket: SONGS_BUCKET, key: newSongKey }).catch(() => { })
           return res.status(400).json({ message: 'Publish requirements not met', errors: publishErrors })
         }
       }
 
       await track.save()
 
-      if (req.files?.cover?.[0] && oldCoverKey) {
+      if (newCoverKey && oldCoverKey) {
         await removeFromBucket({ bucket: COVERS_BUCKET, key: oldCoverKey }).catch(() => { })
       }
-      if (req.files?.song?.[0] && oldAudioKey) {
+      if (newSongKey && oldAudioKey) {
         await removeFromBucket({ bucket: SONGS_BUCKET, key: oldAudioKey }).catch(() => { })
       }
 
       res.json(buildDoc(track, req.user?._id))
     } catch (err) {
       console.error('[Music PUT]', err)
-      res.status(500).json({ message: err.message })
+
+      if (newCoverKey) await removeFromBucket({ bucket: COVERS_BUCKET, key: newCoverKey }).catch(() => { })
+      if (newSongKey) await removeFromBucket({ bucket: SONGS_BUCKET, key: newSongKey }).catch(() => { })
+
+      res.status(500).json({ message: err.message || 'Failed to update track' })
     }
   }
 )
@@ -347,7 +418,8 @@ router.patch('/:id/archive', authMiddleware, adminMiddleware, async (req, res) =
     await track.save()
     res.json(buildDoc(track, req.user?._id))
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    console.error('[Music PATCH /archive]', err)
+    res.status(500).json({ message: 'Failed to archive track' })
   }
 })
 
@@ -372,7 +444,8 @@ router.post('/:id/clone', authMiddleware, adminMiddleware, async (req, res) => {
     const cloned = await Music.create(raw)
     res.status(201).json(buildDoc(cloned, req.user?._id))
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    console.error('[Music POST /clone]', err)
+    res.status(500).json({ message: 'Failed to clone track' })
   }
 })
 
@@ -396,7 +469,8 @@ router.patch('/:id/like', authMiddleware, async (req, res) => {
     await track.save()
     res.json(buildDoc(track, req.user?._id))
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    console.error('[Music PATCH /like]', err)
+    res.status(500).json({ message: 'Failed to toggle like' })
   }
 })
 
@@ -409,7 +483,8 @@ router.patch('/:id/download', authMiddleware, async (req, res) => {
     await track.save()
     res.json(buildDoc(track, req.user?._id))
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    console.error('[Music PATCH /download]', err)
+    res.status(500).json({ message: 'Failed to track download' })
   }
 })
 
@@ -422,7 +497,8 @@ router.patch('/:id/play', authMiddleware, async (req, res) => {
     await track.save()
     res.json({ ok: true })
   } catch (err) {
-    res.status(500).json({ message: err.message })
+    console.error('[Music PATCH /play]', err)
+    res.status(500).json({ message: 'Failed to track play' })
   }
 })
 
