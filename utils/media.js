@@ -11,6 +11,12 @@ export const fallbackCover =
     </svg>`
   )
 
+/**
+ * Normalises a URL:
+ * - blob: / data: / https?:  → returned as-is
+ * - relative path            → prefixed with API_ROOT
+ * - empty                    → ''
+ */
 export function norm(value = '') {
   const s = String(value || '').trim()
   if (!s) return ''
@@ -18,10 +24,14 @@ export function norm(value = '') {
   return `${API_ROOT}/${s.replace(/^\/+/, '')}`
 }
 
+/**
+ * Resolve cover image URL from a music object.
+ * Tries: cover, coverUrl, thumbnail, image fields.
+ */
 export function resolveCover(music) {
   if (!music) return fallbackCover
 
-  for (const key of ['coverUrl', 'cover', 'thumbnail', 'image']) {
+  for (const key of ['cover', 'coverUrl', 'thumbnail', 'image']) {
     const url = norm(music[key] || '')
     if (url) return url
   }
@@ -32,14 +42,20 @@ export function resolveCover(music) {
 export function resolveAudio(music) {
   if (!music?._id) return ''
 
-  if (music.audioUrl) return norm(music.audioUrl)
-
-  if (music.streamUrl) {
-    if (/^https?:/i.test(music.streamUrl)) return music.streamUrl
-    return `${API_ROOT}${music.streamUrl.startsWith('/') ? '' : '/'}${music.streamUrl}`
+  if (music.url) {
+    const u = String(music.url).trim()
+    if (u) return /^https?:/i.test(u) ? u : `${API_ROOT}/${u.replace(/^\/+/, '')}`
   }
 
-  if (music.url) return norm(music.url)
+  if (music.streamUrl) {
+    const u = String(music.streamUrl).trim()
+    if (u) return /^https?:/i.test(u) ? u : `${API_ROOT}${u.startsWith('/') ? '' : '/'}${u}`
+  }
+
+  if (music.audioUrl) {
+    const u = String(music.audioUrl).trim()
+    if (u) return norm(u)
+  }
 
   return `${API_ROOT}/api/music/${music._id}/stream`
 }

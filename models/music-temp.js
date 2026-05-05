@@ -43,10 +43,10 @@ const musicSchema = new mongoose.Schema(
     syncUpdatedAt: { type: Date, default: null },
     syncError: { type: String, default: '' },
 
-    cover: { type: String, default: '' },
+    // Storage
+    cover: { type: String, default: '' },       // public URL
     coverStorageKey: { type: String, default: '' },
-
-    url: { type: String, default: '' },
+    url: { type: String, default: '' },         // public audio URL
     audioStorageKey: { type: String, default: '' },
 
     duration: { type: Number, default: 0 },
@@ -62,6 +62,7 @@ const musicSchema = new mongoose.Schema(
     isFeatured: { type: Boolean, default: false },
     isRecommended: { type: Boolean, default: false },
 
+    likedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
     likeCount: { type: Number, default: 0 },
     downloadCount: { type: Number, default: 0 },
     playCount: { type: Number, default: 0 },
