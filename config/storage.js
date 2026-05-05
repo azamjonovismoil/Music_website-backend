@@ -1,6 +1,6 @@
 const path = require('path')
 const crypto = require('crypto')
-const supabase = require('../config/supabase')
+const supabase = require('./supabase')
 
 const COVERS_BUCKET = process.env.SUPABASE_BUCKET_COVERS || 'music-covers'
 const SONGS_BUCKET = process.env.SUPABASE_BUCKET_SONGS || 'music-songs'
@@ -42,9 +42,8 @@ const uploadBufferToBucket = async ({ bucket, key, buffer, contentType }) => {
 
 const removeFromBucket = async ({ bucket, key }) => {
   if (!key) return
-  try {
-    await supabase.storage.from(bucket).remove([key])
-  } catch { }
+  const { error } = await supabase.storage.from(bucket).remove([key])
+  if (error) throw error
 }
 
 module.exports = {

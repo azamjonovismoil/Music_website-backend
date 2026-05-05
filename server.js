@@ -5,7 +5,6 @@ const mongoose = require('mongoose')
 const cors = require('cors')
 const cookieParser = require('cookie-parser')
 const { verifyMailConnection } = require('./utils/sendEmail')
-const { DATA_ROOT, coversDir, songsDir } = require('./config/storage')
 
 const authRouter = require('./routes/auth')
 const musicRouter = require('./routes/music')
@@ -56,30 +55,10 @@ if (passport) {
   app.use(passport.initialize())
 }
 
-app.use(
-  '/uploads/covers',
-  express.static(coversDir, {
-    setHeaders(res) {
-      res.setHeader('Cache-Control', 'public, max-age=31536000')
-      res.setHeader('Access-Control-Allow-Origin', '*')
-    },
-  })
-)
-
-app.use(
-  '/uploads/songs',
-  express.static(songsDir, {
-    setHeaders(res) {
-      res.setHeader('Cache-Control', 'public, max-age=31536000')
-      res.setHeader('Access-Control-Allow-Origin', '*')
-    },
-  })
-)
-
 app.get('/', (req, res) => {
   res.status(200).json({
     message: 'Backend is running',
-    dataRoot: DATA_ROOT,
+    storage: 'supabase',
   })
 })
 
@@ -87,10 +66,10 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    dataRoot: DATA_ROOT,
     nodeEnv: process.env.NODE_ENV,
     allowedOrigins,
     googleAuth: Boolean(passport),
+    storage: 'supabase',
   })
 })
 
@@ -120,6 +99,14 @@ async function startServer() {
       throw new Error('MONGODB_URI is missing')
     }
 
+    if (!process.env.SUPABASE_URL) {
+      throw new Error('SUPABASE_URL is missing')
+    }
+
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      throw new Error('SUPABASE_SERVICE_ROLE_KEY is missing')
+    }
+
     await mongoose.connect(process.env.MONGODB_URI)
     console.log('[DB] MongoDB connected')
 
@@ -131,8 +118,8 @@ async function startServer() {
 
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`[Server] Running on port ${PORT}`)
-      console.log('[Server] DATA_ROOT:', DATA_ROOT)
       console.log('[Server] Allowed origins:', allowedOrigins)
+      console.log('[Server] Storage: Supabase')
     })
   } catch (err) {
     console.error('[Startup] Error:', err.message)
