@@ -18,37 +18,47 @@ const sanitizeBaseName = (filename = 'file') => {
 }
 
 const makeFileKey = (folder, originalname = 'file') => {
-  const ext = path.extname(originalname || '').toLowerCase() || ''
+  const ext = path.extname(originalname || '').toLowerCase()
   const safe = sanitizeBaseName(originalname)
-  const rand = crypto.randomBytes(6).toString('hex')
+  const rand = crypto.randomBytes(8).toString('hex')
   return `${folder}/${Date.now()}-${rand}-${safe}${ext}`
 }
 
 const uploadBufferToBucket = async ({ bucket, key, buffer, contentType }) => {
-  const { error } = await supabase.storage.from(bucket).upload(key, buffer, {
-    contentType,
+  if (!bucket) throw new Error('Bucket is required')
+  if (!key) throw new Error('File key is required')
+  if (!buffer) throw new Error('Buffer is required')
+
+  const { data, error } = await supabase.storage.from(bucket).upload(key, buffer, {
+    contentType: contentType || 'application/octet-stream',
     upsert: false,
+    cacheControl: '3600',
   })
 
   if (error) {
     throw new Error(`[Storage upload] ${bucket}/${key}: ${error.message}`)
   }
 
-  const { data } = supabase.storage.from(bucket).getPublicUrl(key)
+  const { data: publicData } = supabase.storage.from(bucket).getPublicUrl(key)
 
   return {
-    path: key,
-    url: data?.publicUrl || '',
+    path: data?.path || key,
+    url: publicData?.publicUrl || '',
+    fullPath: data?.fullPath || '',
   }
 }
 
 const removeFromBucket = async ({ bucket, key }) => {
-  if (!key) return
+  if (!bucket || !key) return
 
-  const { error } = await supabase.storage.from(bucket).remove([key])
+  const cleanKey = String(key)
+    .replace(/^https?:\/\/[^/]+\/storage\/v1\/object\/public\/[^/]+\//, '')
+    .replace(/^\/+/, '')
+
+  const { error } = await supabase.storage.from(bucket).remove([cleanKey])
 
   if (error) {
-    throw new Error(`[Storage remove] ${bucket}/${key}: ${error.message}`)
+    throw new Error(`[Storage remove] ${bucket}/${cleanKey}: ${error.message}`)
   }
 }
 
