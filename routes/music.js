@@ -60,7 +60,7 @@ const slugify = (s = '') =>
 
 const canViewTrack = (track, user) => {
   if (!track) return false
-  if (user?.role === 'admin') return true
+  if (Number(user?.isAdmin) === 1) return true
   return track.status === 'published' && track.visibility !== 'private'
 }
 
@@ -121,11 +121,12 @@ const buildDoc = (doc, userId) => {
 
 const validateBase = ({ body, files, isCreate = false }) => {
   const errors = {}
+  const status = String(body.status || 'draft').trim()
 
   if (!String(body.title || '').trim()) errors.title = 'Title is required'
   if (!String(body.artist || '').trim()) errors.artist = 'Artist is required'
 
-  if (isCreate && !files?.song?.[0]) {
+  if (isCreate && status === 'published' && !files?.song?.[0]) {
     errors.song = 'Audio file is required'
   }
 
@@ -334,9 +335,9 @@ router.post(
       const finalPayload = {
         ...payload,
         cover,
-        coverStorageKey: uploadedCoverKey,
+        coverStorageKey: uploadedCoverKey || '',
         url,
-        audioStorageKey: uploadedSongKey,
+        audioStorageKey: uploadedSongKey || '',
       }
 
       if (finalPayload.status === 'published') {
@@ -392,6 +393,9 @@ router.put(
         newCoverKey = uploaded.path
       } else if (req.body.coverUrl !== undefined) {
         track.cover = String(req.body.coverUrl || '').trim()
+        if (track.cover && oldCoverKey && !newCoverKey) {
+          track.coverStorageKey = ''
+        }
       }
 
       if (req.files?.song?.[0]) {
