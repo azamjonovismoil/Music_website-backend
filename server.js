@@ -4,6 +4,7 @@ const express = require('express')
 const mongoose = require('mongoose')
 const cors = require('cors')
 const cookieParser = require('cookie-parser')
+const multer = require('multer')
 const { verifyMailConnection } = require('./utils/sendEmail')
 
 const authRouter = require('./routes/auth')
@@ -90,9 +91,19 @@ app.use((err, req, res, next) => {
     return res.status(403).json({ message: err.message })
   }
 
-  return res.status(500).json({
-    message: err.message || 'Internal server error',
-  })
+  if (err instanceof multer.MulterError) {
+    return res.status(400).json({
+      message: err.message || 'Upload failed',
+    })
+  }
+
+  if (err) {
+    return res.status(400).json({
+      message: err.message || 'Internal server error',
+    })
+  }
+
+  next()
 })
 
 async function startServer() {
