@@ -71,8 +71,6 @@ const getHealth = (track) => {
     !!String(track.url || '').trim(),
     !!String(track.cover || '').trim(),
     Array.isArray(track.genre) && track.genre.length > 0,
-    !!String(track.lyrics || '').trim(),
-    !!String(track.syncedLyricsRaw || '').trim(),
     !!(track.externalLinks && Object.values(track.externalLinks).some((v) => String(v || '').trim())),
     !!String(track.visibility || '').trim(),
   ]
@@ -94,7 +92,6 @@ const getAttentionReasons = (track) => {
   if (!track.url) reasons.push('Missing audio')
   if (track.status === 'draft') reasons.push('Still draft')
   if (track.publishAt && new Date(track.publishAt) < new Date() && track.status !== 'published') reasons.push('Publish time passed')
-  if (track.lyrics && !track.syncedLyricsRaw) reasons.push('Lyrics without sync')
   if ((track.likeCount || 0) >= 10 && track.status !== 'published') reasons.push('Popular but not published')
 
   return reasons
@@ -453,6 +450,31 @@ router.patch('/:id/archive', authMiddleware, adminMiddleware, async (req, res) =
   } catch (err) {
     console.error('[Music PATCH /archive]', err)
     res.status(500).json({ message: 'Failed to archive track' })
+  }
+})
+
+router.delete('/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const track = await Music.findById(req.params.id)
+    if (!track) return res.status(404).json({ message: 'Track not found' })
+
+    const coverKey = track.coverStorageKey
+    const audioKey = track.audioStorageKey
+
+    await track.deleteOne()
+
+    if (coverKey) {
+      await removeFromBucket({ bucket: COVERS_BUCKET, key: coverKey }).catch(() => { })
+    }
+
+    if (audioKey) {
+      await removeFromBucket({ bucket: SONGS_BUCKET, key: audioKey }).catch(() => { })
+    }
+
+    res.json({ ok: true, message: 'Track deleted successfully', id: req.params.id })
+  } catch (err) {
+    console.error('[Music DELETE /:id]', err)
+    res.status(500).json({ message: 'Failed to delete track' })
   }
 })
 
