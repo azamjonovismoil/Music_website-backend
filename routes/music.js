@@ -392,9 +392,13 @@ router.put(
         track.coverStorageKey = uploaded.path
         newCoverKey = uploaded.path
       } else if (req.body.coverUrl !== undefined) {
-        track.cover = String(req.body.coverUrl || '').trim()
-        if (track.cover && oldCoverKey && !newCoverKey) {
-          track.coverStorageKey = ''
+        const nextCoverUrl = String(req.body.coverUrl || '').trim()
+
+        if (nextCoverUrl) {
+          track.cover = nextCoverUrl
+          if (oldCoverKey && !newCoverKey) {
+            track.coverStorageKey = ''
+          }
         }
       }
 

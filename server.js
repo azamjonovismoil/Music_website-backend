@@ -10,6 +10,7 @@ const { verifyMailConnection } = require('./utils/sendEmail')
 const authRouter = require('./routes/auth')
 const musicRouter = require('./routes/music')
 const playlistsRouter = require('./routes/playlists')
+const toolsRouter = require('./routes/tools')
 
 const app = express()
 const PORT = process.env.PORT || 5000
@@ -73,12 +74,14 @@ app.get('/api/health', (req, res) => {
     allowedOrigins,
     googleAuth: Boolean(passport),
     storage: 'supabase',
+    syncService: Boolean(process.env.SYNC_SERVICE_URL),
   })
 })
 
 app.use('/api/auth', authRouter)
 app.use('/api/music', musicRouter)
 app.use('/api/playlists', playlistsRouter)
+app.use('/api/tools', toolsRouter)
 
 app.use((req, res) => {
   res.status(404).json({ message: `Route ${req.method} ${req.path} not found` })
@@ -97,13 +100,9 @@ app.use((err, req, res, next) => {
     })
   }
 
-  if (err) {
-    return res.status(400).json({
-      message: err.message || 'Internal server error',
-    })
-  }
-
-  next()
+  return res.status(400).json({
+    message: err.message || 'Internal server error',
+  })
 })
 
 async function startServer() {
@@ -133,6 +132,7 @@ async function startServer() {
       console.log(`[Server] Running on port ${PORT}`)
       console.log('[Server] Allowed origins:', allowedOrigins)
       console.log('[Server] Storage: Supabase')
+      console.log('[Server] Tools router: /api/tools')
     })
   } catch (err) {
     console.error('[Startup] Error:', err.message)
