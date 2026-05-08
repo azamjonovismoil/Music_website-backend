@@ -88,6 +88,8 @@ const musicSchema = new mongoose.Schema(
     },
 
     likedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+    downloadedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
+
     likeCount: { type: Number, default: 0, min: 0 },
     playCount: { type: Number, default: 0, min: 0 },
     downloadCount: { type: Number, default: 0, min: 0 },

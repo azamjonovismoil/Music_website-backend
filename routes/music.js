@@ -1,6 +1,9 @@
 const express = require('express')
+const mongoose = require('mongoose')
 const router = express.Router()
+
 const Music = require('../models/music-temp')
+const Playlist = require('../models/playlist-temp')
 const upload = require('../middleware/upload')
 const { authMiddleware, adminMiddleware } = require('../middleware/auth')
 const {
@@ -91,16 +94,25 @@ const getAttentionReasons = (track) => {
   if (!track.cover) reasons.push('Missing cover')
   if (!track.url) reasons.push('Missing audio')
   if (track.status === 'draft') reasons.push('Still draft')
-  if (track.publishAt && new Date(track.publishAt) < new Date() && track.status !== 'published') reasons.push('Publish time passed')
-  if ((track.likeCount || 0) >= 10 && track.status !== 'published') reasons.push('Popular but not published')
+  if (track.publishAt && new Date(track.publishAt) < new Date() && track.status !== 'published') {
+    reasons.push('Publish time passed')
+  }
+  if ((track.likeCount || 0) >= 10 && track.status !== 'published') {
+    reasons.push('Popular but not published')
+  }
 
   return reasons
 }
 
 const buildDoc = (doc, userId) => {
   const obj = doc.toObject ? doc.toObject() : { ...doc }
+
   const likedBy = Array.isArray(obj.likedBy) ? obj.likedBy : []
+  const downloadedBy = Array.isArray(obj.downloadedBy) ? obj.downloadedBy : []
+
   const liked = userId ? likedBy.some((id) => String(id) === String(userId)) : false
+  const downloaded = userId ? downloadedBy.some((id) => String(id) === String(userId)) : false
+
   const health = getHealth(obj)
   const attention = getAttentionReasons(obj)
 
@@ -109,6 +121,9 @@ const buildDoc = (doc, userId) => {
   return {
     ...obj,
     liked,
+    downloaded,
+    likeCount: likedBy.length,
+    downloadCount: downloadedBy.length,
     healthScore: health.score,
     healthTier: health.tier,
     needsAttention: attention.length > 0,
@@ -254,6 +269,7 @@ router.get('/admin/summary', authMiddleware, adminMiddleware, async (req, res) =
       draft: docs.filter((t) => t.status === 'draft').length,
       archived: docs.filter((t) => t.status === 'archived').length,
       liked: docs.filter((t) => t.liked).length,
+      downloaded: docs.filter((t) => t.downloaded).length,
       synced: docs.filter((t) => String(t.syncedLyricsRaw || '').trim()).length,
       avgHealth,
       attentionCount: attention.length,
@@ -272,6 +288,16 @@ router.get('/me/liked', authMiddleware, async (req, res) => {
   } catch (err) {
     console.error('[Music GET /me/liked]', err)
     res.status(500).json({ message: 'Failed to fetch liked tracks' })
+  }
+})
+
+router.get('/me/downloaded/list', authMiddleware, async (req, res) => {
+  try {
+    const tracks = await Music.find({ downloadedBy: req.user._id }).sort({ updatedAt: -1 })
+    res.json(tracks.map((t) => buildDoc(t, req.user?._id)))
+  } catch (err) {
+    console.error('[Music GET /me/downloaded/list]', err)
+    res.status(500).json({ message: 'Failed to fetch downloaded tracks' })
   }
 })
 
@@ -298,8 +324,8 @@ router.post(
 
     try {
       const { body, files } = req
-
       const baseErrors = validateBase({ body, files, isCreate: true })
+
       if (Object.keys(baseErrors).length) {
         return res.status(400).json({ message: 'Validation failed', errors: baseErrors })
       }
@@ -350,13 +376,9 @@ router.post(
       res.status(201).json(buildDoc(track, req.user?._id))
     } catch (err) {
       console.error('[Music POST]', err)
-
       if (uploadedCoverKey) await removeFromBucket({ bucket: COVERS_BUCKET, key: uploadedCoverKey }).catch(() => { })
       if (uploadedSongKey) await removeFromBucket({ bucket: SONGS_BUCKET, key: uploadedSongKey }).catch(() => { })
-
-      res.status(500).json({
-        message: err.message || 'Failed to create track',
-      })
+      res.status(500).json({ message: err.message || 'Failed to create track' })
     }
   }
 )
@@ -390,12 +412,9 @@ router.put(
         newCoverKey = uploaded.path
       } else if (req.body.coverUrl !== undefined) {
         const nextCoverUrl = String(req.body.coverUrl || '').trim()
-
         if (nextCoverUrl) {
           track.cover = nextCoverUrl
-          if (oldCoverKey && !newCoverKey) {
-            track.coverStorageKey = ''
-          }
+          if (oldCoverKey && !newCoverKey) track.coverStorageKey = ''
         }
       }
 
@@ -431,10 +450,8 @@ router.put(
       res.json(buildDoc(track, req.user?._id))
     } catch (err) {
       console.error('[Music PUT]', err)
-
       if (newCoverKey) await removeFromBucket({ bucket: COVERS_BUCKET, key: newCoverKey }).catch(() => { })
       if (newSongKey) await removeFromBucket({ bucket: SONGS_BUCKET, key: newSongKey }).catch(() => { })
-
       res.status(500).json({ message: err.message || 'Failed to update track' })
     }
   }
@@ -460,6 +477,12 @@ router.delete('/:id', authMiddleware, adminMiddleware, async (req, res) => {
 
     const coverKey = track.coverStorageKey
     const audioKey = track.audioStorageKey
+    const trackId = track._id
+
+    await Playlist.updateMany(
+      { tracks: trackId },
+      { $pull: { tracks: trackId } }
+    )
 
     await track.deleteOne()
 
@@ -488,6 +511,7 @@ router.post('/:id/clone', authMiddleware, adminMiddleware, async (req, res) => {
     delete raw.createdAt
     delete raw.updatedAt
     delete raw.likedBy
+    delete raw.downloadedBy
     delete raw.likeCount
     delete raw.playCount
     delete raw.downloadCount
@@ -514,15 +538,12 @@ router.patch('/:id/like', authMiddleware, async (req, res) => {
     const likedBy = Array.isArray(track.likedBy) ? track.likedBy : []
     const idx = likedBy.findIndex((id) => String(id) === userId)
 
-    if (idx === -1) {
-      track.likedBy.push(req.user._id)
-      track.likeCount = (track.likeCount || 0) + 1
-    } else {
-      track.likedBy.splice(idx, 1)
-      track.likeCount = Math.max(0, (track.likeCount || 0) - 1)
-    }
+    if (idx === -1) track.likedBy.push(req.user._id)
+    else track.likedBy.splice(idx, 1)
 
+    track.likeCount = track.likedBy.length
     await track.save()
+
     res.json(buildDoc(track, req.user?._id))
   } catch (err) {
     console.error('[Music PATCH /like]', err)
@@ -536,12 +557,20 @@ router.patch('/:id/download', authMiddleware, async (req, res) => {
     if (!track) return res.status(404).json({ message: 'Track not found' })
     if (!canViewTrack(track, req.user)) return res.status(403).json({ message: 'Forbidden' })
 
-    track.downloadCount = (track.downloadCount || 0) + 1
+    const userId = String(req.user._id)
+    const downloadedBy = Array.isArray(track.downloadedBy) ? track.downloadedBy : []
+    const idx = downloadedBy.findIndex((id) => String(id) === userId)
+
+    if (idx === -1) track.downloadedBy.push(req.user._id)
+    else track.downloadedBy.splice(idx, 1)
+
+    track.downloadCount = track.downloadedBy.length
     await track.save()
+
     res.json(buildDoc(track, req.user?._id))
   } catch (err) {
     console.error('[Music PATCH /download]', err)
-    res.status(500).json({ message: 'Failed to track download' })
+    res.status(500).json({ message: 'Failed to toggle download' })
   }
 })
 
@@ -553,6 +582,7 @@ router.patch('/:id/play', authMiddleware, async (req, res) => {
 
     track.playCount = (track.playCount || 0) + 1
     await track.save()
+
     res.json({ ok: true })
   } catch (err) {
     console.error('[Music PATCH /play]', err)
