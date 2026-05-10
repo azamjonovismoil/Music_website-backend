@@ -232,10 +232,20 @@ const buildPayload = async (body, existing = {}, excludeId = null) => {
 
 router.get('/', authMiddleware, async (req, res) => {
   try {
-    const tracks = await Music.find({
+    const filter = {
       status: 'published',
       visibility: { $in: ['public', 'unlisted'] },
-    }).sort({ createdAt: -1 })
+    }
+
+    if (req.query.recommended === 'true') {
+      filter.isRecommended = true
+    }
+
+    if (req.query.featured === 'true') {
+      filter.isFeatured = true
+    }
+
+    const tracks = await Music.find(filter).sort({ isFeatured: -1, createdAt: -1 })
 
     res.json(tracks.map((t) => buildDoc(t, req.user?._id)))
   } catch (err) {
