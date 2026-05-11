@@ -12,7 +12,6 @@ const { JWT_SECRET, CLIENT_URL, NODE_ENV } = process.env
 if (!JWT_SECRET) throw new Error('JWT_SECRET is missing')
 if (!CLIENT_URL) throw new Error('CLIENT_URL is missing')
 
-// Passport ixtiyoriy
 let passport = null
 try {
   passport = require('../utils/googleAuth')
@@ -201,7 +200,6 @@ router.post('/reset-password', async (req, res) => {
   }
 })
 
-// Google routes — faqat passport mavjud bo'lganda ishlaydi
 if (passport) {
   router.get(
     '/google',
@@ -233,6 +231,7 @@ if (passport) {
   router.get('/google', (req, res) => {
     res.status(503).json({ message: 'Google login is not configured' })
   })
+
   router.get('/google/callback', (req, res) => {
     res.redirect(`${CLIENT_URL}/login?error=google_not_configured`)
   })
@@ -240,6 +239,46 @@ if (passport) {
 
 router.get('/me', authMiddleware, (req, res) => {
   return res.json({ user: safeUser(req.user) })
+})
+
+router.put('/profile', authMiddleware, async (req, res) => {
+  try {
+    const { name, email, bio } = req.body
+
+    const nextName = String(name || '').trim()
+    const nextEmail = String(email || '').toLowerCase().trim()
+    const nextBio = String(bio || '').trim()
+
+    if (!nextName || !nextEmail) {
+      return res.status(400).json({ message: 'Name and email are required' })
+    }
+
+    const emailOwner = await User.findOne({
+      email: nextEmail,
+      _id: { $ne: req.user._id },
+    })
+
+    if (emailOwner) {
+      return res.status(409).json({ message: 'Email already in use' })
+    }
+
+    req.user.name = nextName
+    req.user.email = nextEmail
+    req.user.bio = nextBio
+
+    await req.user.save()
+
+    const token = signToken(req.user)
+    setTokenCookie(res, token)
+
+    return res.json({
+      message: 'Profile updated successfully',
+      user: safeUser(req.user),
+    })
+  } catch (err) {
+    console.error('[UpdateProfile]', err)
+    return res.status(500).json({ message: err.message || 'Server error' })
+  }
 })
 
 router.post('/logout', (req, res) => {

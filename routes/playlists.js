@@ -7,19 +7,18 @@ const Music = require('../models/music-temp')
 const { authMiddleware } = require('../middleware/auth')
 
 const normalizeString = (value = '') => String(value || '').trim()
+const isValidId = (id) => mongoose.Types.ObjectId.isValid(String(id || ''))
 
 const serializePlaylist = (playlist) => ({
   ...playlist.toObject(),
-  count: playlist.tracks?.length || 0,
+  count: Array.isArray(playlist.tracks) ? playlist.tracks.length : 0,
 })
-
-const isValidId = (id) => mongoose.Types.ObjectId.isValid(String(id || ''))
 
 router.get('/', authMiddleware, async (req, res) => {
   try {
     const playlists = await Playlist.find({ owner: req.user._id })
       .populate('tracks')
-      .sort({ isPinned: -1, createdAt: -1 })
+      .sort({ isPinned: -1, updatedAt: -1, createdAt: -1 })
 
     res.json(playlists.map(serializePlaylist))
   } catch (err) {
@@ -99,11 +98,11 @@ router.patch('/:id', authMiddleware, async (req, res) => {
     const { name, description, color, cover, isPinned } = req.body
 
     if (name !== undefined) {
-      const nextName = normalizeString(name)
-      if (nextName.length < 2) {
+      const cleanName = normalizeString(name)
+      if (cleanName.length < 2) {
         return res.status(400).json({ message: 'Playlist name must be at least 2 characters' })
       }
-      playlist.name = nextName
+      playlist.name = cleanName
     }
 
     if (description !== undefined) playlist.description = normalizeString(description)
@@ -154,7 +153,6 @@ router.post('/:id/tracks', authMiddleware, async (req, res) => {
     }
 
     const musicId = req.body.musicId || req.body.trackId
-
     if (!musicId || !isValidId(musicId)) {
       return res.status(400).json({ message: 'Valid musicId is required' })
     }
@@ -180,7 +178,6 @@ router.post('/:id/tracks', authMiddleware, async (req, res) => {
     }
 
     await playlist.populate('tracks')
-
     res.json(serializePlaylist(playlist))
   } catch (err) {
     res.status(500).json({
