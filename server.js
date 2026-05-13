@@ -36,20 +36,36 @@ const allowedOrigins = [
   'https://www.exclusivemusics.com',
 ].filter(Boolean)
 
+const vercelPreviewRegex =
+  /^https:\/\/music-website-[a-z0-9-]+-azamjonovismoils-projects\.vercel\.app$/
+
 const corsOptions = {
   origin(origin, callback) {
     if (!origin) return callback(null, true)
-    if (allowedOrigins.includes(origin)) return callback(null, true)
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true)
+    }
+
+    if (vercelPreviewRegex.test(origin)) {
+      return callback(null, true)
+    }
+
     return callback(new Error(`CORS blocked for origin: ${origin}`))
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
-  exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length', 'Content-Type'],
+  exposedHeaders: [
+    'Content-Range',
+    'Accept-Ranges',
+    'Content-Length',
+    'Content-Type',
+  ],
 }
 
 app.use(cors(corsOptions))
-app.options(/.*/, cors(corsOptions))
+app.options('*', cors(corsOptions))
 
 app.use(express.json({ limit: '50mb' }))
 app.use(express.urlencoded({ extended: true, limit: '50mb' }))
@@ -100,7 +116,7 @@ app.use((err, req, res, next) => {
     })
   }
 
-  return res.status(400).json({
+  return res.status(500).json({
     message: err.message || 'Internal server error',
   })
 })
