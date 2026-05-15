@@ -2,7 +2,11 @@ const express = require('express')
 const jwt = require('jsonwebtoken')
 const User = require('../models/User')
 const { sendEmail } = require('../utils/sendEmail')
-const { resetPasswordTemplate } = require('../utils/emailTemplates')
+const {
+  verificationTemplate,
+  resetPasswordTemplate,
+  welcomeTemplate,
+} = require('../utils/emailTemplates')
 const { authMiddleware, COOKIE_NAME } = require('../middleware/auth')
 
 const router = express.Router()
@@ -20,10 +24,15 @@ try {
 }
 
 const generateCode = () => String(Math.floor(100000 + Math.random() * 900000))
+const codeExpiryDate = () => new Date(Date.now() + 10 * 60 * 1000)
 
 const signToken = (user) =>
   jwt.sign(
-    { id: user._id, email: user.email, isAdmin: user.isAdmin },
+    {
+      id: user._id,
+      email: user.email,
+      isAdmin: user.isAdmin,
+    },
     JWT_SECRET,
     { expiresIn: '7d' }
   )
@@ -35,14 +44,17 @@ const cookieOptions = {
   maxAge: 7 * 24 * 60 * 60 * 1000,
 }
 
-const setTokenCookie = (res, token) => res.cookie(COOKIE_NAME, token, cookieOptions)
+const setTokenCookie = (res, token) => {
+  res.cookie(COOKIE_NAME, token, cookieOptions)
+}
 
-const clearTokenCookie = (res) =>
+const clearTokenCookie = (res) => {
   res.clearCookie(COOKIE_NAME, {
     httpOnly: true,
     secure: NODE_ENV === 'production',
     sameSite: NODE_ENV === 'production' ? 'none' : 'lax',
   })
+}
 
 const safeUser = (user) => ({
   id: user._id,
@@ -52,42 +64,78 @@ const safeUser = (user) => ({
   avatar: user.avatar,
   isAdmin: user.isAdmin,
   authProvider: user.authProvider,
+  isEmailVerified: !!user.isEmailVerified,
 })
+
+const normalizeEmail = (value) => String(value || '').toLowerCase().trim()
+const normalizeName = (value) => String(value || '').trim()
+const normalizeText = (value) => String(value || '').trim()
+
+const sendVerificationEmail = async (user) => {
+  if (!user?.email) return
+
+  const code = generateCode()
+  user.emailVerificationCode = code
+  user.emailVerificationExpires = codeExpiryDate()
+  await user.save()
+
+  await sendEmail({
+    to: user.email,
+    ...verificationTemplate(user.name, code),
+  })
+}
 
 router.post('/register', async (req, res) => {
   try {
-    const { name, email, password, bio } = req.body
+    const name = normalizeName(req.body.name)
+    const email = normalizeEmail(req.body.email)
+    const password = String(req.body.password || '')
+    const bio = normalizeText(req.body.bio)
 
     if (!name || !email || !password) {
       return res.status(400).json({ message: 'Name, email and password are required' })
     }
 
-    if (String(password).length < 6) {
+    if (name.length < 2) {
+      return res.status(400).json({ message: 'Name must be at least 2 characters' })
+    }
+
+    if (password.length < 6) {
       return res.status(400).json({ message: 'Password must be at least 6 characters' })
     }
 
-    const normalizedEmail = String(email).toLowerCase().trim()
-    const exists = await User.findOne({ email: normalizedEmail })
+    const existingUser = await User.findOne({ email })
 
-    if (exists) {
-      return res.status(409).json({ message: 'Email already registered' })
+    if (existingUser) {
+      if (existingUser.authProvider === 'google' && !existingUser.password) {
+        return res.status(409).json({
+          message: 'This email is already connected to Google sign-in',
+          code: 'EMAIL_ALREADY_GOOGLE',
+        })
+      }
+
+      return res.status(409).json({
+        message: 'Email already registered',
+        code: 'EMAIL_ALREADY_EXISTS',
+      })
     }
 
     const user = await User.create({
-      name: String(name).trim(),
-      email: normalizedEmail,
+      name,
+      email,
       password,
-      bio: bio ? String(bio).trim() : '',
+      bio,
       isAdmin: 0,
       authProvider: 'local',
-      isEmailVerified: true,
+      isEmailVerified: false,
     })
 
-    const token = signToken(user)
-    setTokenCookie(res, token)
+    await sendVerificationEmail(user)
 
     return res.status(201).json({
-      message: 'Account created successfully',
+      message: 'Account created. Verification code sent to your email.',
+      requiresVerification: true,
+      email: user.email,
       user: safeUser(user),
     })
   } catch (err) {
@@ -96,16 +144,109 @@ router.post('/register', async (req, res) => {
   }
 })
 
+router.post('/verify-email', async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body.email)
+    const code = normalizeText(req.body.code)
+
+    if (!email || !code) {
+      return res.status(400).json({ message: 'Email and verification code are required' })
+    }
+
+    const user = await User.findOne({ email }).select('+password')
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' })
+    }
+
+    if (user.isEmailVerified) {
+      const token = signToken(user)
+      setTokenCookie(res, token)
+
+      return res.json({
+        message: 'Email already verified',
+        user: safeUser(user),
+      })
+    }
+
+    if (!user.emailVerificationCode || user.emailVerificationCode !== code) {
+      return res.status(400).json({ message: 'Invalid verification code' })
+    }
+
+    if (!user.emailVerificationExpires || new Date() > new Date(user.emailVerificationExpires)) {
+      return res.status(400).json({ message: 'Verification code expired' })
+    }
+
+    user.isEmailVerified = true
+    user.emailVerificationCode = undefined
+    user.emailVerificationExpires = undefined
+    await user.save()
+
+    try {
+      await sendEmail({
+        to: user.email,
+        ...welcomeTemplate(user.name),
+      })
+    } catch (mailErr) {
+      console.warn('[VerifyEmail] Welcome email failed:', mailErr.message)
+    }
+
+    const token = signToken(user)
+    setTokenCookie(res, token)
+
+    return res.json({
+      message: 'Email verified successfully',
+      user: safeUser(user),
+    })
+  } catch (err) {
+    console.error('[VerifyEmail]', err)
+    return res.status(500).json({ message: err.message || 'Server error' })
+  }
+})
+
+router.post('/resend-verification', async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body.email)
+
+    if (!email) {
+      return res.status(400).json({ message: 'Email is required' })
+    }
+
+    const user = await User.findOne({ email })
+
+    if (!user) {
+      return res.json({ message: 'If that email exists, a code was sent' })
+    }
+
+    if (user.authProvider === 'google') {
+      return res.status(400).json({
+        message: 'This account uses Google sign-in',
+      })
+    }
+
+    if (user.isEmailVerified) {
+      return res.status(400).json({ message: 'Email is already verified' })
+    }
+
+    await sendVerificationEmail(user)
+
+    return res.json({ message: 'Verification code sent again' })
+  } catch (err) {
+    console.error('[ResendVerification]', err)
+    return res.status(500).json({ message: err.message || 'Server error' })
+  }
+})
+
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body
+    const email = normalizeEmail(req.body.email)
+    const password = String(req.body.password || '')
 
     if (!email || !password) {
       return res.status(400).json({ message: 'Email and password are required' })
     }
 
-    const normalizedEmail = String(email).toLowerCase().trim()
-    const user = await User.findOne({ email: normalizedEmail }).select('+password')
+    const user = await User.findOne({ email }).select('+password')
 
     if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' })
@@ -122,10 +263,22 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' })
     }
 
+    if (!user.isEmailVerified) {
+      return res.status(403).json({
+        message: 'Please verify your email before signing in',
+        code: 'EMAIL_NOT_VERIFIED',
+        requiresVerification: true,
+        email: user.email,
+      })
+    }
+
     const token = signToken(user)
     setTokenCookie(res, token)
 
-    return res.json({ message: 'Login successful', user: safeUser(user) })
+    return res.json({
+      message: 'Login successful',
+      user: safeUser(user),
+    })
   } catch (err) {
     console.error('[Login]', err)
     return res.status(500).json({ message: err.message || 'Server error' })
@@ -134,14 +287,13 @@ router.post('/login', async (req, res) => {
 
 router.post('/forgot-password', async (req, res) => {
   try {
-    const { email } = req.body
+    const email = normalizeEmail(req.body.email)
 
     if (!email) {
       return res.status(400).json({ message: 'Email is required' })
     }
 
-    const normalizedEmail = String(email).toLowerCase().trim()
-    const user = await User.findOne({ email: normalizedEmail })
+    const user = await User.findOne({ email })
 
     if (!user || user.authProvider === 'google') {
       return res.json({ message: 'If that email exists, a reset code was sent' })
@@ -149,7 +301,7 @@ router.post('/forgot-password', async (req, res) => {
 
     const code = generateCode()
     user.passwordResetCode = code
-    user.passwordResetExpires = new Date(Date.now() + 10 * 60 * 1000)
+    user.passwordResetExpires = codeExpiryDate()
     await user.save()
 
     await sendEmail({
@@ -166,23 +318,28 @@ router.post('/forgot-password', async (req, res) => {
 
 router.post('/reset-password', async (req, res) => {
   try {
-    const { email, code, newPassword } = req.body
+    const email = normalizeEmail(req.body.email)
+    const code = normalizeText(req.body.code)
+    const newPassword = String(req.body.newPassword || '')
 
     if (!email || !code || !newPassword) {
       return res.status(400).json({ message: 'All fields are required' })
     }
 
-    if (String(newPassword).length < 6) {
+    if (newPassword.length < 6) {
       return res.status(400).json({ message: 'Password must be at least 6 characters' })
     }
 
-    const normalizedEmail = String(email).toLowerCase().trim()
-    const user = await User.findOne({ email: normalizedEmail }).select('+password')
+    const user = await User.findOne({ email }).select('+password')
 
-    if (!user) return res.status(404).json({ message: 'User not found' })
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' })
+    }
+
     if (!user.passwordResetCode || user.passwordResetCode !== code) {
       return res.status(400).json({ message: 'Invalid reset code' })
     }
+
     if (!user.passwordResetExpires || new Date() > new Date(user.passwordResetExpires)) {
       return res.status(400).json({ message: 'Reset code expired' })
     }
@@ -191,9 +348,12 @@ router.post('/reset-password', async (req, res) => {
     user.passwordResetCode = undefined
     user.passwordResetExpires = undefined
     user.authProvider = 'local'
+    user.isEmailVerified = true
     await user.save()
 
-    return res.json({ message: 'Password reset successfully. You can now sign in.' })
+    return res.json({
+      message: 'Password reset successfully. You can now sign in.',
+    })
   } catch (err) {
     console.error('[ResetPassword]', err)
     return res.status(500).json({ message: err.message || 'Server error' })
@@ -243,11 +403,9 @@ router.get('/me', authMiddleware, (req, res) => {
 
 router.put('/profile', authMiddleware, async (req, res) => {
   try {
-    const { name, email, bio } = req.body
-
-    const nextName = String(name || '').trim()
-    const nextEmail = String(email || '').toLowerCase().trim()
-    const nextBio = String(bio || '').trim()
+    const nextName = normalizeName(req.body.name)
+    const nextEmail = normalizeEmail(req.body.email)
+    const nextBio = normalizeText(req.body.bio)
 
     if (!nextName || !nextEmail) {
       return res.status(400).json({ message: 'Name and email are required' })
@@ -262,9 +420,26 @@ router.put('/profile', authMiddleware, async (req, res) => {
       return res.status(409).json({ message: 'Email already in use' })
     }
 
+    const emailChanged = nextEmail !== req.user.email
+
     req.user.name = nextName
     req.user.email = nextEmail
     req.user.bio = nextBio
+
+    if (emailChanged && req.user.authProvider === 'local') {
+      req.user.isEmailVerified = false
+      await req.user.save()
+      await sendVerificationEmail(req.user)
+
+      clearTokenCookie(res)
+
+      return res.json({
+        message: 'Profile updated. Please verify your new email.',
+        requiresVerification: true,
+        email: req.user.email,
+        user: safeUser(req.user),
+      })
+    }
 
     await req.user.save()
 
