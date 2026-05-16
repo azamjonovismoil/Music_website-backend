@@ -31,6 +31,7 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:7777',
   'http://localhost:3000',
+  'https://exclusivemusics.vercel.app',
   'https://exclusivemusics.netlify.app',
   'https://exclusivemusics.com',
   'https://www.exclusivemusics.com',
