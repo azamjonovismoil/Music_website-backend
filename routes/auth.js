@@ -215,12 +215,13 @@ router.post('/resend-verification', async (req, res) => {
     const user = await User.findOne({ email })
 
     if (!user) {
-      return res.json({ message: 'If that email exists, a code was sent' })
+      return res.status(404).json({ message: 'No account found with this email' })
     }
 
-    if (user.authProvider === 'google') {
+    if (user.authProvider === 'google' && !user.password) {
       return res.status(400).json({
-        message: 'This account uses Google sign-in',
+        message: 'This account uses Google sign-in. Please continue with Google.',
+        code: 'GOOGLE_ACCOUNT',
       })
     }
 
@@ -255,6 +256,7 @@ router.post('/login', async (req, res) => {
     if (user.authProvider === 'google' && !user.password) {
       return res.status(400).json({
         message: 'This account uses Google sign-in. Please continue with Google.',
+        code: 'GOOGLE_ACCOUNT',
       })
     }
 
@@ -295,8 +297,15 @@ router.post('/forgot-password', async (req, res) => {
 
     const user = await User.findOne({ email })
 
-    if (!user || user.authProvider === 'google') {
-      return res.json({ message: 'If that email exists, a reset code was sent' })
+    if (!user) {
+      return res.status(404).json({ message: 'No account found with this email' })
+    }
+
+    if (user.authProvider === 'google' && !user.password) {
+      return res.status(400).json({
+        message: 'This account uses Google sign-in. Please continue with Google.',
+        code: 'GOOGLE_ACCOUNT',
+      })
     }
 
     const code = generateCode()
@@ -309,7 +318,12 @@ router.post('/forgot-password', async (req, res) => {
       ...resetPasswordTemplate(user.name, code),
     })
 
-    return res.json({ message: 'Reset code sent to your email' })
+    console.log(`[ForgotPassword] Reset code sent to ${user.email}`)
+
+    return res.json({
+      message: 'Reset code sent to your email',
+      email: user.email,
+    })
   } catch (err) {
     console.error('[ForgotPassword]', err)
     return res.status(500).json({ message: err.message || 'Server error' })
