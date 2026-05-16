@@ -22,7 +22,7 @@ const NODE_ENV = String(process.env.NODE_ENV || '').trim()
 const CLIENT_URL = cleanUrl(process.env.CLIENT_URL)
 
 if (!JWT_SECRET) throw new Error('JWT_SECRET is missing')
-if (!CLIENT_URL) throw new Error('CLIENT_URL is missing') IENT_URL) throw new Error('CLIENT_URL is missing')
+if (!CLIENT_URL) throw new Error('CLIENT_URL is missing')
 
 let passport = null
 try {
