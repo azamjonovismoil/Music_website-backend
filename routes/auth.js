@@ -11,10 +11,18 @@ const { authMiddleware, COOKIE_NAME } = require('../middleware/auth')
 
 const router = express.Router()
 
-const { JWT_SECRET, CLIENT_URL, NODE_ENV } = process.env
+const cleanUrl = (value = '') =>
+  String(value || '')
+    .trim()
+    .replace(/^['"]+|['"]+$/g, '')
+    .replace(/\/+$/, '')
+
+const JWT_SECRET = String(process.env.JWT_SECRET || '').trim()
+const NODE_ENV = String(process.env.NODE_ENV || '').trim()
+const CLIENT_URL = cleanUrl(process.env.CLIENT_URL)
 
 if (!JWT_SECRET) throw new Error('JWT_SECRET is missing')
-if (!CLIENT_URL) throw new Error('CLIENT_URL is missing')
+if (!CLIENT_URL) throw new Error('CLIENT_URL is missing') IENT_URL) throw new Error('CLIENT_URL is missing')
 
 let passport = null
 try {
