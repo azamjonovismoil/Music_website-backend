@@ -17,6 +17,7 @@ const {
 const ALLOWED_STATUS = ['draft', 'published', 'archived']
 const ALLOWED_VISIBILITY = ['public', 'unlisted', 'private']
 const ALLOWED_RELEASE_TYPES = ['single', 'ep', 'album-track', 'remix', 'live', 'instrumental']
+const ALLOWED_EDITORIAL_PRIORITY = ['low', 'medium', 'high']
 
 const parseBool = (v) => String(v).toLowerCase() === 'true'
 
@@ -61,6 +62,9 @@ const sanitizeEnum = (value, allowed, fallback) => {
 const slugify = (s = '') =>
   String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 
+const escapeRegex = (s = '') =>
+  String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
 const canViewTrack = (track, user) => {
   if (!track) return false
   if (Number(user?.isAdmin) === 1) return true
@@ -76,6 +80,9 @@ const getHealth = (track) => {
     Array.isArray(track.genre) && track.genre.length > 0,
     !!(track.externalLinks && Object.values(track.externalLinks).some((v) => String(v || '').trim())),
     !!String(track.visibility || '').trim(),
+    !!String(track.bio || '').trim(),
+    !!String(track.artistBio || '').trim(),
+    !!String(track.shortDescription || '').trim(),
   ]
 
   const score = Math.round((checks.filter(Boolean).length / checks.length) * 100)
@@ -94,9 +101,14 @@ const getAttentionReasons = (track) => {
   if (!track.cover) reasons.push('Missing cover')
   if (!track.url) reasons.push('Missing audio')
   if (track.status === 'draft') reasons.push('Still draft')
+  if (!track.bio) reasons.push('Missing track bio')
+  if (!track.artistBio) reasons.push('Missing artist bio')
+  if ((track.genre || []).length === 0) reasons.push('Missing genre')
+
   if (track.publishAt && new Date(track.publishAt) < new Date() && track.status !== 'published') {
     reasons.push('Publish time passed')
   }
+
   if ((track.likeCount || 0) >= 10 && track.status !== 'published') {
     reasons.push('Popular but not published')
   }
@@ -154,6 +166,9 @@ const validatePublishable = (payload) => {
   if (!String(payload.cover || '').trim()) errors.cover = 'Cover is required for publishing'
   if (!Array.isArray(payload.genre) || !payload.genre.length) errors.genre = 'At least one genre is required'
   if (!String(payload.visibility || '').trim()) errors.visibility = 'Visibility is required'
+  if (!String(payload.bio || '').trim()) errors.bio = 'Track bio is required for publishing'
+  if (!String(payload.artistBio || '').trim()) errors.artistBio = 'Artist bio is required for publishing'
+  if (!String(payload.shortDescription || '').trim()) errors.shortDescription = 'Short description is required'
 
   return errors
 }
@@ -210,16 +225,35 @@ const buildPayload = async (body, existing = {}, excludeId = null) => {
     visibility: body.visibility !== undefined ? sanitizeEnum(body.visibility, ALLOWED_VISIBILITY, 'public') : existing.visibility,
     releaseDate: body.releaseDate !== undefined ? parseDate(body.releaseDate) : existing.releaseDate,
     publishAt: body.publishAt !== undefined ? parseDate(body.publishAt) : existing.publishAt,
+
     bio: body.bio !== undefined ? String(body.bio).trim() : existing.bio,
+    shortDescription: body.shortDescription !== undefined ? String(body.shortDescription).trim() : existing.shortDescription,
+
     artistBio: body.artistBio !== undefined ? String(body.artistBio).trim() : existing.artistBio,
+    artistImage: body.artistImage !== undefined ? String(body.artistImage).trim() : existing.artistImage,
+    artistCountry: body.artistCountry !== undefined ? String(body.artistCountry).trim() : existing.artistCountry,
+    artistGenres: body.artistGenres !== undefined ? parseJsonField(body.artistGenres) : existing.artistGenres,
+
+    highlightText: body.highlightText !== undefined ? String(body.highlightText).trim() : existing.highlightText,
+
     lyrics: body.lyrics !== undefined ? String(body.lyrics).trim() : existing.lyrics,
     syncedLyricsRaw: body.syncedLyricsRaw !== undefined ? String(body.syncedLyricsRaw).trim() : existing.syncedLyricsRaw,
+
     duration: body.duration !== undefined ? parseNum(body.duration, 0) : existing.duration,
     bpm: body.bpm !== undefined ? parseNum(body.bpm, 0) : existing.bpm,
     keySignature: body.keySignature !== undefined ? String(body.keySignature).trim() : existing.keySignature,
     isrc: body.isrc !== undefined ? String(body.isrc).trim() : existing.isrc,
+
     labelName: body.labelName !== undefined ? String(body.labelName).trim() : existing.labelName,
     copyright: body.copyright !== undefined ? String(body.copyright).trim() : existing.copyright,
+
+    editorialPriority: body.editorialPriority !== undefined
+      ? sanitizeEnum(body.editorialPriority, ALLOWED_EDITORIAL_PRIORITY, 'medium')
+      : existing.editorialPriority,
+
+    seoTitle: body.seoTitle !== undefined ? String(body.seoTitle).trim() : existing.seoTitle,
+    seoDescription: body.seoDescription !== undefined ? String(body.seoDescription).trim() : existing.seoDescription,
+
     status: body.status !== undefined ? sanitizeEnum(body.status, ALLOWED_STATUS, 'draft') : existing.status,
     isExplicit: body.isExplicit !== undefined ? parseBool(body.isExplicit) : existing.isExplicit,
     isFeatured: body.isFeatured !== undefined ? parseBool(body.isFeatured) : existing.isFeatured,
@@ -245,7 +279,44 @@ router.get('/', authMiddleware, async (req, res) => {
       filter.isFeatured = true
     }
 
-    const tracks = await Music.find(filter).sort({ isFeatured: -1, createdAt: -1 })
+    if (req.query.artist) {
+      filter.artist = new RegExp(escapeRegex(req.query.artist), 'i')
+    }
+
+    if (req.query.language) {
+      filter.language = new RegExp(escapeRegex(req.query.language), 'i')
+    }
+
+    if (req.query.genre) {
+      filter.genre = { $in: [new RegExp(escapeRegex(req.query.genre), 'i')] }
+    }
+
+    if (req.query.mood) {
+      filter.mood = { $in: [new RegExp(escapeRegex(req.query.mood), 'i')] }
+    }
+
+    if (req.query.country) {
+      filter.country = new RegExp(escapeRegex(req.query.country), 'i')
+    }
+
+    if (req.query.q) {
+      const q = String(req.query.q).trim()
+      filter.$or = [
+        { title: new RegExp(escapeRegex(q), 'i') },
+        { artist: new RegExp(escapeRegex(q), 'i') },
+        { album: new RegExp(escapeRegex(q), 'i') },
+        { tags: { $in: [new RegExp(escapeRegex(q), 'i')] } },
+        { genre: { $in: [new RegExp(escapeRegex(q), 'i')] } },
+        { mood: { $in: [new RegExp(escapeRegex(q), 'i')] } },
+        { language: new RegExp(escapeRegex(q), 'i') },
+      ]
+    }
+
+    const tracks = await Music.find(filter).sort({
+      isFeatured: -1,
+      isRecommended: -1,
+      createdAt: -1,
+    })
 
     res.json(tracks.map((t) => buildDoc(t, req.user?._id)))
   } catch (err) {
@@ -256,7 +327,21 @@ router.get('/', authMiddleware, async (req, res) => {
 
 router.get('/admin/all', authMiddleware, adminMiddleware, async (req, res) => {
   try {
-    const tracks = await Music.find().sort({ createdAt: -1 })
+    const filter = {}
+
+    if (req.query.status) filter.status = req.query.status
+    if (req.query.artist) filter.artist = new RegExp(escapeRegex(req.query.artist), 'i')
+    if (req.query.q) {
+      const q = String(req.query.q).trim()
+      filter.$or = [
+        { title: new RegExp(escapeRegex(q), 'i') },
+        { artist: new RegExp(escapeRegex(q), 'i') },
+        { album: new RegExp(escapeRegex(q), 'i') },
+        { tags: { $in: [new RegExp(escapeRegex(q), 'i')] } },
+      ]
+    }
+
+    const tracks = await Music.find(filter).sort({ createdAt: -1 })
     res.json(tracks.map((t) => buildDoc(t, req.user?._id)))
   } catch (err) {
     console.error('[Music GET /admin/all]', err)
@@ -565,7 +650,7 @@ router.patch('/:id/download', authMiddleware, async (req, res) => {
   try {
     const track = await Music.findById(req.params.id)
     if (!track) return res.status(404).json({ message: 'Track not found' })
-    if (!canViewTrack(track, req.user)) return res.status(403).json({ message: 'Forbidden' })
+    if (!canViewTrack(track, req.user)) return res.status(403).json({ message: 'Forbidden' })m
 
     const userId = String(req.user._id)
     const downloadedBy = Array.isArray(track.downloadedBy) ? track.downloadedBy : []

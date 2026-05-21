@@ -51,7 +51,15 @@ const musicSchema = new mongoose.Schema(
     publishAt: { type: Date, default: null },
 
     bio: { type: String, trim: true, default: '' },
+    shortDescription: { type: String, trim: true, default: '', maxlength: 220 },
+
     artistBio: { type: String, trim: true, default: '' },
+    artistImage: { type: String, trim: true, default: '' },
+    artistCountry: { type: String, trim: true, default: '' },
+    artistGenres: [{ type: String, trim: true }],
+
+    highlightText: { type: String, trim: true, default: '', maxlength: 120 },
+
     lyrics: { type: String, trim: true, default: '' },
     syncedLyricsRaw: { type: String, trim: true, default: '' },
 
@@ -67,6 +75,15 @@ const musicSchema = new mongoose.Schema(
 
     labelName: { type: String, trim: true, default: '' },
     copyright: { type: String, trim: true, default: '' },
+
+    editorialPriority: {
+      type: String,
+      enum: ['low', 'medium', 'high'],
+      default: 'medium',
+    },
+
+    seoTitle: { type: String, trim: true, default: '' },
+    seoDescription: { type: String, trim: true, default: '', maxlength: 180 },
 
     status: {
       type: String,
@@ -99,5 +116,8 @@ const musicSchema = new mongoose.Schema(
 
 musicSchema.index({ title: 1, artist: 1 })
 musicSchema.index({ status: 1, visibility: 1, createdAt: -1 })
+musicSchema.index({ artist: 1, createdAt: -1 })
+musicSchema.index({ language: 1, createdAt: -1 })
+musicSchema.index({ isFeatured: 1, isRecommended: 1, createdAt: -1 })
 
 module.exports = mongoose.model('Music', musicSchema)

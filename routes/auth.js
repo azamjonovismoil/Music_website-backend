@@ -20,6 +20,7 @@ const cleanUrl = (value = '') =>
 const JWT_SECRET = String(process.env.JWT_SECRET || '').trim()
 const NODE_ENV = String(process.env.NODE_ENV || '').trim()
 const CLIENT_URL = cleanUrl(process.env.CLIENT_URL)
+const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase()
 
 if (!JWT_SECRET) throw new Error('JWT_SECRET is missing')
 if (!CLIENT_URL) throw new Error('CLIENT_URL is missing')
@@ -79,6 +80,8 @@ const normalizeEmail = (value) => String(value || '').toLowerCase().trim()
 const normalizeName = (value) => String(value || '').trim()
 const normalizeText = (value) => String(value || '').trim()
 
+const getAdminFlag = (email) => (normalizeEmail(email) === ADMIN_EMAIL ? 1 : 0)
+
 const sendVerificationEmail = async (user) => {
   if (!user?.email) return
 
@@ -133,7 +136,7 @@ router.post('/register', async (req, res) => {
       email,
       password,
       bio,
-      isAdmin: 0,
+      isAdmin: getAdminFlag(email),
       authProvider: 'local',
       isEmailVerified: false,
     })
@@ -167,7 +170,12 @@ router.post('/verify-email', async (req, res) => {
       return res.status(404).json({ message: 'User not found' })
     }
 
+    if (normalizeEmail(user.email) === ADMIN_EMAIL && Number(user.isAdmin) !== 1) {
+      user.isAdmin = 1
+    }
+
     if (user.isEmailVerified) {
+      await user.save()
       const token = signToken(user)
       setTokenCookie(res, token)
 
@@ -261,6 +269,11 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' })
     }
 
+    if (normalizeEmail(user.email) === ADMIN_EMAIL && Number(user.isAdmin) !== 1) {
+      user.isAdmin = 1
+      await user.save()
+    }
+
     if (user.authProvider === 'google' && !user.password) {
       return res.status(400).json({
         message: 'This account uses Google sign-in. Please continue with Google.',
@@ -326,8 +339,6 @@ router.post('/forgot-password', async (req, res) => {
       ...resetPasswordTemplate(user.name, code),
     })
 
-    console.log(`[ForgotPassword] Reset code sent to ${user.email}`)
-
     return res.json({
       message: 'Reset code sent to your email',
       email: user.email,
@@ -371,6 +382,11 @@ router.post('/reset-password', async (req, res) => {
     user.passwordResetExpires = undefined
     user.authProvider = 'local'
     user.isEmailVerified = true
+
+    if (normalizeEmail(user.email) === ADMIN_EMAIL && Number(user.isAdmin) !== 1) {
+      user.isAdmin = 1
+    }
+
     await user.save()
 
     return res.json({
@@ -388,6 +404,7 @@ if (passport) {
     passport.authenticate('google', {
       scope: ['profile', 'email'],
       session: false,
+      prompt: 'select_account',
     })
   )
 
@@ -447,6 +464,10 @@ router.put('/profile', authMiddleware, async (req, res) => {
     req.user.name = nextName
     req.user.email = nextEmail
     req.user.bio = nextBio
+
+    if (normalizeEmail(req.user.email) === ADMIN_EMAIL && Number(req.user.isAdmin) !== 1) {
+      req.user.isAdmin = 1
+    }
 
     if (emailChanged && req.user.authProvider === 'local') {
       req.user.isEmailVerified = false

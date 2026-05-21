@@ -11,6 +11,7 @@ const cleanUrl = (value = '') =>
 const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || '').trim()
 const GOOGLE_CLIENT_SECRET = String(process.env.GOOGLE_CLIENT_SECRET || '').trim()
 const GOOGLE_CALLBACK_URL = cleanUrl(process.env.GOOGLE_CALLBACK_URL)
+const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase()
 
 if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_CALLBACK_URL) {
   console.warn('[Google Auth] Missing env vars — Google login disabled')
@@ -40,7 +41,7 @@ if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_CALLBACK_URL) {
               email,
               password: '',
               bio: '',
-              isAdmin: 0,
+              isAdmin: email === ADMIN_EMAIL ? 1 : 0,
               authProvider: 'google',
               googleId,
               isEmailVerified: true,
@@ -54,6 +55,10 @@ if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_CALLBACK_URL) {
 
           user.authProvider = 'google'
           user.isEmailVerified = true
+
+          if (email === ADMIN_EMAIL && Number(user.isAdmin) !== 1) {
+            user.isAdmin = 1
+          }
 
           await user.save()
 
