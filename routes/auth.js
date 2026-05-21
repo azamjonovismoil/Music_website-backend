@@ -411,18 +411,19 @@ if (passport) {
   router.get(
     '/google/callback',
     passport.authenticate('google', {
-      failureRedirect: `${CLIENT_URL}/login?error=google_failed`,
+      failureRedirect: `${CLIENT_URL}/#/login?error=google_failed`,
       session: false,
     }),
     (req, res) => {
       try {
         const token = signToken(req.user)
         setTokenCookie(res, token)
-        const redirectPath = Number(req.user.isAdmin) === 1 ? '/admin' : '/user'
+
+        const redirectPath = Number(req.user.isAdmin) === 1 ? '/#/admin' : '/#/user'
         return res.redirect(`${CLIENT_URL}${redirectPath}`)
       } catch (err) {
         console.error('[Google Callback]', err)
-        return res.redirect(`${CLIENT_URL}/login?error=server`)
+        return res.redirect(`${CLIENT_URL}/#/login?error=server`)
       }
     }
   )
@@ -432,7 +433,7 @@ if (passport) {
   })
 
   router.get('/google/callback', (req, res) => {
-    res.redirect(`${CLIENT_URL}/login?error=google_not_configured`)
+    res.redirect(`${CLIENT_URL}/#/login?error=google_not_configured`)
   })
 }
 
