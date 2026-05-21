@@ -650,7 +650,7 @@ router.patch('/:id/download', authMiddleware, async (req, res) => {
   try {
     const track = await Music.findById(req.params.id)
     if (!track) return res.status(404).json({ message: 'Track not found' })
-    if (!canViewTrack(track, req.user)) return res.status(403).json({ message: 'Forbidden' })m
+    if (!canViewTrack(track, req.user)) return res.status(403).json({ message: 'Forbidden' })
 
     const userId = String(req.user._id)
     const downloadedBy = Array.isArray(track.downloadedBy) ? track.downloadedBy : []
