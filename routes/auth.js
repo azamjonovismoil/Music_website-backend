@@ -35,6 +35,14 @@ try {
 const generateCode = () => String(Math.floor(100000 + Math.random() * 900000))
 const codeExpiryDate = () => new Date(Date.now() + 10 * 60 * 1000)
 
+const normalizeEmail = (value) => String(value || '').toLowerCase().trim()
+const normalizeName = (value) => String(value || '').trim()
+const normalizeText = (value) => String(value || '').trim()
+const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
+
+const isAdminEmail = (email) => normalizeEmail(email) === ADMIN_EMAIL
+const getAdminFlag = (email) => (isAdminEmail(email) ? 1 : 0)
+
 const signToken = (user) =>
   jwt.sign(
     {
@@ -71,17 +79,10 @@ const safeUser = (user) => ({
   email: user.email,
   bio: user.bio,
   avatar: user.avatar,
-  isAdmin: user.isAdmin,
+  isAdmin: Number(user.isAdmin) === 1 ? 1 : 0,
   authProvider: user.authProvider,
   isEmailVerified: !!user.isEmailVerified,
 })
-
-const normalizeEmail = (value) => String(value || '').toLowerCase().trim()
-const normalizeName = (value) => String(value || '').trim()
-const normalizeText = (value) => String(value || '').trim()
-
-const isAdminEmail = (email) => normalizeEmail(email) === ADMIN_EMAIL
-const getAdminFlag = (email) => (isAdminEmail(email) ? 1 : 0)
 
 const sendVerificationEmail = async (user) => {
   if (!user?.email) return
@@ -111,6 +112,10 @@ router.post('/register', async (req, res) => {
 
     if (name.length < 2) {
       return res.status(400).json({ message: 'Name must be at least 2 characters' })
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ message: 'Enter a valid email address' })
     }
 
     if (password.length < 6) {
@@ -170,6 +175,14 @@ router.post('/verify-email', async (req, res) => {
       return res.status(400).json({ message: 'Email and verification code are required' })
     }
 
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ message: 'Enter a valid email address' })
+    }
+
+    if (!/^\d{6}$/.test(code)) {
+      return res.status(400).json({ message: 'Enter a valid 6-digit verification code' })
+    }
+
     const user = await User.findOne({ email }).select('+password')
 
     if (!user) {
@@ -193,7 +206,6 @@ router.post('/verify-email', async (req, res) => {
     }
 
     if (user.isEmailVerified) {
-      await user.save()
       const token = signToken(user)
       setTokenCookie(res, token)
 
@@ -246,6 +258,10 @@ router.post('/resend-verification', async (req, res) => {
       return res.status(400).json({ message: 'Email is required' })
     }
 
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ message: 'Enter a valid email address' })
+    }
+
     const user = await User.findOne({ email })
 
     if (!user) {
@@ -285,6 +301,10 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ message: 'Email and password are required' })
     }
 
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ message: 'Enter a valid email address' })
+    }
+
     const user = await User.findOne({ email }).select('+password')
 
     if (!user) {
@@ -299,12 +319,14 @@ router.post('/login', async (req, res) => {
     }
 
     const valid = await user.comparePassword(password)
+
     if (!valid) {
       return res.status(401).json({ message: 'Invalid credentials' })
     }
 
-    if (isAdminEmail(user.email)) {
-      user.isAdmin = 1
+    user.isAdmin = getAdminFlag(user.email)
+
+    if (Number(user.isAdmin) === 1) {
       user.isEmailVerified = true
       user.emailVerificationCode = undefined
       user.emailVerificationExpires = undefined
@@ -339,6 +361,10 @@ router.post('/forgot-password', async (req, res) => {
 
     if (!email) {
       return res.status(400).json({ message: 'Email is required' })
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ message: 'Enter a valid email address' })
     }
 
     const user = await User.findOne({ email })
@@ -384,6 +410,14 @@ router.post('/reset-password', async (req, res) => {
       return res.status(400).json({ message: 'All fields are required' })
     }
 
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ message: 'Enter a valid email address' })
+    }
+
+    if (!/^\d{6}$/.test(code)) {
+      return res.status(400).json({ message: 'Enter a valid 6-digit reset code' })
+    }
+
     if (newPassword.length < 6) {
       return res.status(400).json({ message: 'Password must be at least 6 characters' })
     }
@@ -407,10 +441,7 @@ router.post('/reset-password', async (req, res) => {
     user.passwordResetExpires = undefined
     user.authProvider = 'local'
     user.isEmailVerified = true
-
-    if (isAdminEmail(user.email)) {
-      user.isAdmin = 1
-    }
+    user.isAdmin = getAdminFlag(user.email)
 
     await user.save()
 
@@ -441,6 +472,8 @@ if (passport) {
     }),
     (req, res) => {
       try {
+        req.user.isAdmin = getAdminFlag(req.user.email)
+
         const token = signToken(req.user)
         setTokenCookie(res, token)
 
@@ -454,11 +487,11 @@ if (passport) {
   )
 } else {
   router.get('/google', (req, res) => {
-    res.status(503).json({ message: 'Google login is not configured' })
+    return res.redirect(`${CLIENT_URL}/#/login?error=google_not_configured`)
   })
 
   router.get('/google/callback', (req, res) => {
-    res.redirect(`${CLIENT_URL}/#/login?error=google_not_configured`)
+    return res.redirect(`${CLIENT_URL}/#/login?error=google_not_configured`)
   })
 }
 
@@ -476,6 +509,14 @@ router.put('/profile', authMiddleware, async (req, res) => {
       return res.status(400).json({ message: 'Name and email are required' })
     }
 
+    if (nextName.length < 2) {
+      return res.status(400).json({ message: 'Name must be at least 2 characters' })
+    }
+
+    if (!isValidEmail(nextEmail)) {
+      return res.status(400).json({ message: 'Enter a valid email address' })
+    }
+
     const emailOwner = await User.findOne({
       email: nextEmail,
       _id: { $ne: req.user._id },
@@ -486,19 +527,20 @@ router.put('/profile', authMiddleware, async (req, res) => {
     }
 
     const emailChanged = nextEmail !== req.user.email
+    const nextIsAdmin = getAdminFlag(nextEmail)
 
     req.user.name = nextName
     req.user.email = nextEmail
     req.user.bio = nextBio
+    req.user.isAdmin = nextIsAdmin
 
-    if (isAdminEmail(req.user.email)) {
-      req.user.isAdmin = 1
+    if (nextIsAdmin === 1) {
       req.user.isEmailVerified = true
       req.user.emailVerificationCode = undefined
       req.user.emailVerificationExpires = undefined
     }
 
-    if (emailChanged && req.user.authProvider === 'local' && !isAdminEmail(req.user.email)) {
+    if (emailChanged && req.user.authProvider === 'local' && nextIsAdmin !== 1) {
       req.user.isEmailVerified = false
       await req.user.save()
       await sendVerificationEmail(req.user)
