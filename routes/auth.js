@@ -38,6 +38,7 @@ const codeExpiryDate = () => new Date(Date.now() + 10 * 60 * 1000)
 const normalizeEmail = (value) => String(value || '').toLowerCase().trim()
 const normalizeName = (value) => String(value || '').trim()
 const normalizeText = (value) => String(value || '').trim()
+const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
 
 const isAdminEmail = (email) => normalizeEmail(email) === ADMIN_EMAIL
 const getAdminFlag = (email) => (isAdminEmail(email) ? 1 : 0)
@@ -47,7 +48,7 @@ const signToken = (user) =>
     {
       id: user._id,
       email: user.email,
-      isAdmin: user.isAdmin,
+      isAdmin: Number(user.isAdmin) === 1 ? 1 : 0,
     },
     JWT_SECRET,
     { expiresIn: '7d' }
@@ -78,7 +79,7 @@ const safeUser = (user) => ({
   email: user.email,
   bio: user.bio,
   avatar: user.avatar,
-  isAdmin: user.isAdmin,
+  isAdmin: Number(user.isAdmin) === 1 ? 1 : 0,
   authProvider: user.authProvider,
   isEmailVerified: !!user.isEmailVerified,
 })
@@ -91,19 +92,19 @@ const assignVerificationCode = async (user) => {
   return code
 }
 
-const deliverVerificationEmail = async (user, code) => {
-  await sendEmail({
-    to: user.email,
-    ...verificationTemplate(user.name, code),
-  })
-}
-
 const assignResetCode = async (user) => {
   const code = generateCode()
   user.passwordResetCode = code
   user.passwordResetExpires = codeExpiryDate()
   await user.save()
   return code
+}
+
+const deliverVerificationEmail = async (user, code) => {
+  await sendEmail({
+    to: user.email,
+    ...verificationTemplate(user.name, code),
+  })
 }
 
 const deliverResetEmail = async (user, code) => {
@@ -123,6 +124,10 @@ router.post('/register', async (req, res) => {
 
     if (!name || !email || !password) {
       return res.status(400).json({ message: 'Name, email and password are required' })
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ message: 'Enter a valid email address' })
     }
 
     if (name.length < 2) {
@@ -190,6 +195,10 @@ router.post('/verify-email', async (req, res) => {
       return res.status(400).json({ message: 'Email and verification code are required' })
     }
 
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ message: 'Enter a valid email address' })
+    }
+
     const user = await User.findOne({ email }).select('+password')
 
     if (!user) {
@@ -235,13 +244,12 @@ router.post('/verify-email', async (req, res) => {
     user.emailVerificationExpires = undefined
     await user.save()
 
-    welcomeTemplate &&
-      sendEmail({
-        to: user.email,
-        ...welcomeTemplate(user.name),
-      }).catch((mailErr) => {
-        console.warn('[VerifyEmail] Welcome email failed:', mailErr.message)
-      })
+    sendEmail({
+      to: user.email,
+      ...welcomeTemplate(user.name),
+    }).catch((mailErr) => {
+      console.warn('[VerifyEmail] Welcome email failed:', mailErr.message)
+    })
 
     const token = signToken(user)
     setTokenCookie(res, token)
@@ -264,6 +272,10 @@ router.post('/resend-verification', async (req, res) => {
       return res.status(400).json({ message: 'Email is required' })
     }
 
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ message: 'Enter a valid email address' })
+    }
+
     const user = await User.findOne({ email })
 
     if (!user) {
@@ -272,19 +284,13 @@ router.post('/resend-verification', async (req, res) => {
       })
     }
 
-    if (isAdminEmail(user.email)) {
+    if (isAdminEmail(user.email) || user.isEmailVerified) {
       return res.json({
         message: 'If an account exists and still needs verification, a new code will arrive shortly.',
       })
     }
 
     if (user.authProvider === 'google' && !user.password) {
-      return res.json({
-        message: 'If an account exists and still needs verification, a new code will arrive shortly.',
-      })
-    }
-
-    if (user.isEmailVerified) {
       return res.json({
         message: 'If an account exists and still needs verification, a new code will arrive shortly.',
       })
@@ -328,6 +334,7 @@ router.post('/login', async (req, res) => {
     }
 
     const valid = await user.comparePassword(password)
+
     if (!valid) {
       return res.status(401).json({ message: 'Invalid credentials' })
     }
@@ -370,15 +377,13 @@ router.post('/forgot-password', async (req, res) => {
       return res.status(400).json({ message: 'Email is required' })
     }
 
-    const user = await User.findOne({ email })
-
-    if (!user) {
-      return res.json({
-        message: 'If the email is registered, a reset code will arrive shortly.',
-      })
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ message: 'Enter a valid email address' })
     }
 
-    if (user.authProvider === 'google' && !user.password) {
+    const user = await User.findOne({ email })
+
+    if (!user || (user.authProvider === 'google' && !user.password)) {
       return res.json({
         message: 'If the email is registered, a reset code will arrive shortly.',
       })
@@ -433,10 +438,7 @@ router.post('/reset-password', async (req, res) => {
     user.passwordResetExpires = undefined
     user.authProvider = 'local'
     user.isEmailVerified = true
-
-    if (isAdminEmail(user.email)) {
-      user.isAdmin = 1
-    }
+    user.isAdmin = getAdminFlag(user.email)
 
     await user.save()
 
@@ -502,6 +504,10 @@ router.put('/profile', authMiddleware, async (req, res) => {
       return res.status(400).json({ message: 'Name and email are required' })
     }
 
+    if (!isValidEmail(nextEmail)) {
+      return res.status(400).json({ message: 'Enter a valid email address' })
+    }
+
     const emailOwner = await User.findOne({
       email: nextEmail,
       _id: { $ne: req.user._id },
@@ -535,7 +541,7 @@ router.put('/profile', authMiddleware, async (req, res) => {
       })
 
       return res.json({
-        message: 'Profile updated. Verify your new email with the code being sent.',
+        message: 'Profile updated. If the email is reachable, a verification code will arrive shortly.',
         requiresVerification: true,
         email: req.user.email,
         user: safeUser(req.user),

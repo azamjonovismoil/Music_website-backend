@@ -1,38 +1,91 @@
-const APP_NAME = 'MusicApp'
-const ACCENT = '#0ea5e9'
-const ORANGE = '#f97316'
+const APP_NAME = 'Exclusive'
+const APP_URL = process.env.CLIENT_URL || 'https://exclusivemusics.vercel.app'
+const SUPPORT_EMAIL = process.env.MAIL_FROM || 'support@exclusivemusics.com'
 
-const baseLayout = (content) => `
+const BRAND_PRIMARY = '#5d82ff'
+const BRAND_SECONDARY = '#7c5cff'
+const BRAND_WARNING = '#f97316'
+const BG = '#070b14'
+const CARD = '#111827'
+const CARD_ALT = '#0f172a'
+const TEXT = '#f8fafc'
+const TEXT_SOFT = '#cbd5e1'
+const TEXT_MUTED = '#94a3b8'
+const BORDER = 'rgba(148, 163, 184, 0.18)'
+
+const escapeHtml = (value = '') =>
+  String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+
+const appButton = (label, href) => `
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin:24px auto 0;">
+    <tr>
+      <td align="center" bgcolor="${BRAND_PRIMARY}" style="border-radius:12px;">
+        <a href="${href}"
+           style="display:inline-block;padding:14px 22px;font-size:14px;font-weight:800;color:#ffffff;text-decoration:none;border-radius:12px;background:linear-gradient(135deg, ${BRAND_PRIMARY}, ${BRAND_SECONDARY});">
+          ${label}
+        </a>
+      </td>
+    </tr>
+  </table>
+`
+
+const codeBox = (code, color = BRAND_PRIMARY) => `
+  <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="margin:26px 0 10px;">
+    <tr>
+      <td align="center">
+        <div style="display:inline-block;padding:18px 26px;border-radius:16px;background:rgba(255,255,255,0.04);border:1px solid ${BORDER};">
+          <span style="display:inline-block;font-family:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;font-size:34px;line-height:1;font-weight:900;letter-spacing:10px;color:${color};">
+            ${escapeHtml(code)}
+          </span>
+        </div>
+      </td>
+    </tr>
+  </table>
+`
+
+const infoCard = (content) => `
+  <div style="margin-top:14px;padding:16px 18px;border-radius:14px;background:rgba(255,255,255,0.03);border:1px solid ${BORDER};">
+    ${content}
+  </div>
+`
+
+const baseLayout = ({ preheader = '', title = APP_NAME, content }) => `
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>${APP_NAME}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${escapeHtml(title)}</title>
 </head>
-<body style="margin:0;padding:0;background:#04090f;font-family:'Segoe UI',Arial,sans-serif;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#04090f;padding:40px 0;">
+<body style="margin:0;padding:0;background:${BG};font-family:Inter,'Segoe UI',Arial,sans-serif;color:${TEXT};">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;">
+    ${escapeHtml(preheader)}
+  </div>
+
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:${BG};padding:32px 12px;">
     <tr>
       <td align="center">
-        <table width="520" cellpadding="0" cellspacing="0"
-          style="background:linear-gradient(180deg,#0f1e38,#0a1525);
-                 border:1px solid rgba(56,189,248,0.15);
-                 border-radius:20px;overflow:hidden;">
-
-          <!-- Header -->
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:560px;">
           <tr>
-            <td style="padding:32px 40px 24px;border-bottom:1px solid rgba(255,255,255,0.06);">
-              <table width="100%" cellpadding="0" cellspacing="0">
+            <td style="padding:0 0 14px 0;">
+              <table role="presentation" cellspacing="0" cellpadding="0" border="0">
                 <tr>
-                  <td>
-                    <div style="display:inline-flex;align-items:center;gap:10px;">
-                      <div style="width:38px;height:38px;background:linear-gradient(135deg,${ACCENT},#38bdf8);
-                                  border-radius:10px;display:inline-block;text-align:center;line-height:38px;">
-                        <span style="font-size:20px;">♪</span>
-                      </div>
-                      <span style="color:#f1f5f9;font-size:18px;font-weight:800;letter-spacing:-0.02em;">
-                        ${APP_NAME}
-                      </span>
+                  <td valign="middle" style="padding-right:10px;">
+                    <div style="width:38px;height:38px;border-radius:12px;background:linear-gradient(135deg, ${BRAND_PRIMARY}, ${BRAND_SECONDARY});text-align:center;line-height:38px;color:#fff;font-size:17px;font-weight:900;">
+                      ♪
+                    </div>
+                  </td>
+                  <td valign="middle">
+                    <div style="font-size:20px;line-height:1.1;font-weight:900;color:${TEXT};letter-spacing:-0.03em;">
+                      ${APP_NAME}
+                    </div>
+                    <div style="font-size:12px;line-height:1.4;color:${TEXT_MUTED};margin-top:2px;">
+                      Premium music experience
                     </div>
                   </td>
                 </tr>
@@ -40,23 +93,22 @@ const baseLayout = (content) => `
             </td>
           </tr>
 
-          <!-- Body -->
           <tr>
-            <td style="padding:36px 40px;">
+            <td style="background:linear-gradient(180deg, ${CARD}, ${CARD_ALT});border:1px solid ${BORDER};border-radius:24px;padding:32px 28px;box-shadow:0 20px 50px rgba(0,0,0,0.32);">
               ${content}
             </td>
           </tr>
 
-          <!-- Footer -->
           <tr>
-            <td style="padding:20px 40px 28px;border-top:1px solid rgba(255,255,255,0.05);text-align:center;">
-              <p style="margin:0;color:#334155;font-size:12px;line-height:1.6;">
-                This email was sent by ${APP_NAME}. If you didn't request this, ignore it.<br/>
+            <td style="padding:16px 6px 0;text-align:center;">
+              <p style="margin:0;color:${TEXT_MUTED};font-size:12px;line-height:1.7;">
+                This email was sent by ${APP_NAME}. If you didn’t request this, you can safely ignore it.
+              </p>
+              <p style="margin:8px 0 0;color:${TEXT_MUTED};font-size:12px;line-height:1.7;">
                 © ${new Date().getFullYear()} ${APP_NAME}. All rights reserved.
               </p>
             </td>
           </tr>
-
         </table>
       </td>
     </tr>
@@ -65,92 +117,122 @@ const baseLayout = (content) => `
 </html>
 `
 
-const codeBox = (code, color = ACCENT) => `
-  <div style="text-align:center;margin:28px 0;">
-    <div style="display:inline-block;background:rgba(14,165,233,0.08);
-                border:1px solid rgba(14,165,233,0.2);
-                border-radius:14px;padding:20px 36px;">
-      <span style="font-size:36px;font-weight:900;letter-spacing:10px;color:${color};
-              font-family:'Courier New',monospace;">
-        ${code}
-      </span>
-    </div>
-    <p style="margin:12px 0 0;color:#475569;font-size:13px;">
-      Expires in <strong style="color:#94a3b8;">10 minutes</strong>
-    </p>
-  </div>
-`
+const verificationTemplate = (userName, code) => {
+  const safeName = escapeHtml(userName || 'there')
 
-// ── Verification email ──────────────────────────────────────
-const verificationTemplate = (userName, code) => ({
-  subject: `${code} is your ${APP_NAME} verification code`,
-  text: `Hi ${userName},\n\nYour verification code is: ${code}\n\nExpires in 10 minutes.`,
-  html: baseLayout(`
-    <h2 style="margin:0 0 8px;color:#f1f5f9;font-size:22px;font-weight:800;">
-      Verify your email
-    </h2>
-    <p style="margin:0 0 4px;color:#94a3b8;font-size:15px;line-height:1.6;">
-      Hi <strong style="color:#e2e8f0;">${userName}</strong>, welcome to ${APP_NAME}!
-    </p>
-    <p style="margin:0 0 8px;color:#64748b;font-size:14px;line-height:1.6;">
-      Use the code below to verify your email address and activate your account.
-    </p>
-    ${codeBox(code, ACCENT)}
-    <div style="background:rgba(14,165,233,0.05);border-radius:12px;padding:16px 18px;margin-top:8px;">
-      <p style="margin:0;color:#475569;font-size:13px;line-height:1.7;">
-        🔒 Never share this code with anyone.<br/>
-        ⏱ This code is valid for <strong style="color:#94a3b8;">10 minutes</strong> only.
-      </p>
-    </div>
-  `),
-})
+  return {
+    subject: `${code} is your ${APP_NAME} verification code`,
+    text: `Hi ${userName || 'there'},\n\nYour verification code is: ${code}\n\nIt expires in 10 minutes.\n\nIf you didn’t create this account, you can ignore this email.`,
+    html: baseLayout({
+      title: `${APP_NAME} verification`,
+      preheader: `Your verification code is ${code}.`,
+      content: `
+        <div style="display:inline-block;padding:7px 12px;border-radius:999px;background:rgba(93,130,255,0.16);border:1px solid rgba(93,130,255,0.24);color:${TEXT};font-size:11px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;">
+          Verify account
+        </div>
 
-// ── Reset password email ────────────────────────────────────
-const resetPasswordTemplate = (userName, code) => ({
-  subject: `Reset your ${APP_NAME} password`,
-  text: `Hi ${userName},\n\nYour password reset code is: ${code}\n\nExpires in 10 minutes.`,
-  html: baseLayout(`
-    <h2 style="margin:0 0 8px;color:#f1f5f9;font-size:22px;font-weight:800;">
-      Reset your password
-    </h2>
-    <p style="margin:0 0 4px;color:#94a3b8;font-size:15px;line-height:1.6;">
-      Hi <strong style="color:#e2e8f0;">${userName}</strong>,
-    </p>
-    <p style="margin:0 0 8px;color:#64748b;font-size:14px;line-height:1.6;">
-      We received a request to reset your password. Use the code below to continue.
-    </p>
-    ${codeBox(code, ORANGE)}
-    <div style="background:rgba(249,115,22,0.05);border-radius:12px;padding:16px 18px;margin-top:8px;">
-      <p style="margin:0;color:#475569;font-size:13px;line-height:1.7;">
-        🔒 If you didn't request this, you can safely ignore this email.<br/>
-        ⏱ This code expires in <strong style="color:#94a3b8;">10 minutes</strong>.
-      </p>
-    </div>
-  `),
-})
+        <h1 style="margin:16px 0 10px;font-size:34px;line-height:1.02;letter-spacing:-0.05em;font-weight:900;color:${TEXT};">
+          Verify your email
+        </h1>
 
-// ── Welcome email (register dan keyin) ─────────────────────
-const welcomeTemplate = (userName) => ({
-  subject: `Welcome to ${APP_NAME} 🎵`,
-  text: `Hi ${userName},\n\nYour account is verified. Welcome to ${APP_NAME}!`,
-  html: baseLayout(`
-    <div style="text-align:center;margin-bottom:24px;">
-      <div style="font-size:52px;margin-bottom:8px;">🎵</div>
-      <h2 style="margin:0 0 8px;color:#f1f5f9;font-size:24px;font-weight:800;">
-        You're all set, ${userName}!
-      </h2>
-      <p style="margin:0;color:#64748b;font-size:14px;line-height:1.7;">
-        Your ${APP_NAME} account is verified and ready to use.<br/>
-        Start discovering and listening to your favourite music.
-      </p>
-    </div>
-    <div style="background:rgba(14,165,233,0.06);border:1px solid rgba(14,165,233,0.12);
-                border-radius:14px;padding:20px 24px;text-align:center;">
-      <p style="margin:0;color:#94a3b8;font-size:13px;">
-        Enjoy your music experience 🎧
-      </p>
-    </div>
-  `),
-})
+        <p style="margin:0;color:${TEXT_SOFT};font-size:15px;line-height:1.7;">
+          Hi <strong style="color:${TEXT};">${safeName}</strong>, use the verification code below to activate your account.
+        </p>
 
-module.exports = { verificationTemplate, resetPasswordTemplate, welcomeTemplate }
+        ${codeBox(code, BRAND_PRIMARY)}
+
+        <p style="margin:0;text-align:center;color:${TEXT_MUTED};font-size:13px;line-height:1.6;">
+          This code expires in <strong style="color:${TEXT_SOFT};">10 minutes</strong>.
+        </p>
+
+        ${appButton('Open Exclusive', APP_URL)}
+
+        ${infoCard(`
+          <p style="margin:0;color:${TEXT_SOFT};font-size:13px;line-height:1.7;">
+            Never share this code with anyone. If you didn’t create an account, you can ignore this email.
+          </p>
+        `)}
+      `,
+    }),
+  }
+}
+
+const resetPasswordTemplate = (userName, code) => {
+  const safeName = escapeHtml(userName || 'there')
+
+  return {
+    subject: `Reset your ${APP_NAME} password`,
+    text: `Hi ${userName || 'there'},\n\nYour password reset code is: ${code}\n\nIt expires in 10 minutes.\n\nIf you didn’t request this, ignore this email.`,
+    html: baseLayout({
+      title: `${APP_NAME} password reset`,
+      preheader: `Your password reset code is ${code}.`,
+      content: `
+        <div style="display:inline-block;padding:7px 12px;border-radius:999px;background:rgba(249,115,22,0.14);border:1px solid rgba(249,115,22,0.24);color:${TEXT};font-size:11px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;">
+          Password reset
+        </div>
+
+        <h1 style="margin:16px 0 10px;font-size:34px;line-height:1.02;letter-spacing:-0.05em;font-weight:900;color:${TEXT};">
+          Reset your password
+        </h1>
+
+        <p style="margin:0;color:${TEXT_SOFT};font-size:15px;line-height:1.7;">
+          Hi <strong style="color:${TEXT};">${safeName}</strong>, use the code below to continue resetting your password.
+        </p>
+
+        ${codeBox(code, BRAND_WARNING)}
+
+        <p style="margin:0;text-align:center;color:${TEXT_MUTED};font-size:13px;line-height:1.6;">
+          This code expires in <strong style="color:${TEXT_SOFT};">10 minutes</strong>.
+        </p>
+
+        ${appButton('Go to Exclusive', APP_URL)}
+
+        ${infoCard(`
+          <p style="margin:0;color:${TEXT_SOFT};font-size:13px;line-height:1.7;">
+            If you didn’t request a password reset, you can safely ignore this email and your password will stay unchanged.
+          </p>
+        `)}
+      `,
+    }),
+  }
+}
+
+const welcomeTemplate = (userName) => {
+  const safeName = escapeHtml(userName || 'there')
+
+  return {
+    subject: `Welcome to ${APP_NAME} 🎵`,
+    text: `Hi ${userName || 'there'},\n\nYour account is verified and ready to use. Welcome to ${APP_NAME}!`,
+    html: baseLayout({
+      title: `Welcome to ${APP_NAME}`,
+      preheader: `Your account is verified and ready to use.`,
+      content: `
+        <div style="text-align:center;">
+          <div style="font-size:46px;line-height:1;margin-bottom:10px;">🎵</div>
+
+          <h1 style="margin:0 0 10px;font-size:34px;line-height:1.02;letter-spacing:-0.05em;font-weight:900;color:${TEXT};">
+            You’re all set, ${safeName}
+          </h1>
+
+          <p style="margin:0;color:${TEXT_SOFT};font-size:15px;line-height:1.7;">
+            Your account is verified and ready. Start discovering tracks, playlists, and your next favorite vibe.
+          </p>
+
+          ${appButton('Open Exclusive', APP_URL)}
+        </div>
+
+        ${infoCard(`
+          <p style="margin:0;color:${TEXT_SOFT};font-size:13px;line-height:1.7;text-align:center;">
+            Need help? Reply from your support flow or contact us at ${escapeHtml(SUPPORT_EMAIL)}.
+          </p>
+        `)}
+      `,
+    }),
+  }
+}
+
+module.exports = {
+  verificationTemplate,
+  resetPasswordTemplate,
+  welcomeTemplate,
+}

@@ -1,49 +1,59 @@
-const nodemailer = require('nodemailer')
+const { Resend } = require('resend')
 
-const createTransporter = () => {
-  return nodemailer.createTransport({
-    host: process.env.MAIL_HOST || 'smtp.gmail.com',
-    port: Number(process.env.MAIL_PORT || 587),
-    secure: String(process.env.MAIL_SECURE) === 'true',
-    auth: {
-      user: process.env.MAIL_USER,
-      pass: process.env.MAIL_PASS,
-    },
-  })
+let resend = null
+
+const getResend = () => {
+  if (!process.env.RESEND_API_KEY) {
+    throw new Error('RESEND_API_KEY is missing')
+  }
+
+  if (!resend) {
+    resend = new Resend(process.env.RESEND_API_KEY)
+  }
+
+  return resend
 }
 
 const verifyMailConnection = async () => {
   try {
-    if (!process.env.MAIL_USER || !process.env.MAIL_PASS) {
-      console.warn('[Mail] MAIL_USER or MAIL_PASS missing')
-      return
+    if (!process.env.RESEND_API_KEY) {
+      console.warn('[Mail] RESEND_API_KEY missing')
+      return false
     }
 
-    const transporter = createTransporter()
-    await transporter.verify()
-    console.log('[Mail] SMTP connection verified')
+    getResend()
+    console.log('[Mail] Resend configured')
+    return true
   } catch (err) {
-    console.warn('[Mail] SMTP connection failed:', err.message)
+    console.warn('[Mail] Resend configuration failed:', err.message)
+    return false
   }
 }
 
 const sendEmail = async ({ to, subject, html, text }) => {
-  if (!process.env.MAIL_USER || !process.env.MAIL_PASS) {
-    throw new Error('Mail credentials are missing')
-  }
+  if (!to) throw new Error('Recipient email is required')
+  if (!subject) throw new Error('Email subject is required')
+  if (!html && !text) throw new Error('Email content is required')
 
-  const transporter = createTransporter()
+  const client = getResend()
 
-  const info = await transporter.sendMail({
-    from: process.env.MAIL_FROM || process.env.MAIL_USER,
-    to,
+  const response = await client.emails.send({
+    from: process.env.MAIL_FROM || 'Exclusive <onboarding@resend.dev>',
+    to: Array.isArray(to) ? to : [to],
     subject,
-    text,
     html,
+    text,
   })
 
-  console.log(`[Mail] Sent to ${to} - MessageId: ${info.messageId}`)
-  return info
+  if (response?.error) {
+    throw new Error(response.error.message || 'Failed to send email')
+  }
+
+  console.log(
+    `[Mail] Sent to ${Array.isArray(to) ? to.join(', ') : to} - Id: ${response?.data?.id || 'n/a'}`
+  )
+
+  return response
 }
 
 module.exports = {
