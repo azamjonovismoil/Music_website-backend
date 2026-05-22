@@ -35,6 +35,13 @@ try {
 const generateCode = () => String(Math.floor(100000 + Math.random() * 900000))
 const codeExpiryDate = () => new Date(Date.now() + 10 * 60 * 1000)
 
+const normalizeEmail = (value) => String(value || '').toLowerCase().trim()
+const normalizeName = (value) => String(value || '').trim()
+const normalizeText = (value) => String(value || '').trim()
+
+const isAdminEmail = (email) => normalizeEmail(email) === ADMIN_EMAIL
+const getAdminFlag = (email) => (isAdminEmail(email) ? 1 : 0)
+
 const signToken = (user) =>
   jwt.sign(
     {
@@ -75,13 +82,6 @@ const safeUser = (user) => ({
   authProvider: user.authProvider,
   isEmailVerified: !!user.isEmailVerified,
 })
-
-const normalizeEmail = (value) => String(value || '').toLowerCase().trim()
-const normalizeName = (value) => String(value || '').trim()
-const normalizeText = (value) => String(value || '').trim()
-
-const isAdminEmail = (email) => normalizeEmail(email) === ADMIN_EMAIL
-const getAdminFlag = (email) => (isAdminEmail(email) ? 1 : 0)
 
 const sendVerificationEmail = async (user) => {
   if (!user?.email) return
@@ -144,7 +144,11 @@ router.post('/register', async (req, res) => {
     })
 
     if (!adminEmail) {
-      await sendVerificationEmail(user)
+      try {
+        await sendVerificationEmail(user)
+      } catch (mailErr) {
+        console.warn('[Register] Verification email failed:', mailErr.message)
+      }
     }
 
     return res.status(201).json({

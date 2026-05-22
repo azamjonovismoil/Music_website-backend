@@ -14,7 +14,6 @@ const toolsRouter = require('./routes/tools')
 
 const app = express()
 const PORT = Number(process.env.PORT || 5000)
-const NODE_ENV = String(process.env.NODE_ENV || 'development').trim()
 
 app.set('trust proxy', 1)
 
@@ -31,7 +30,7 @@ const cleanUrl = (value = '') =>
     .replace(/^['"]+|['"]+$/g, '')
     .replace(/\/+$/, '')
 
-const baseAllowedOrigins = [
+const allowedOrigins = [
   cleanUrl(process.env.CLIENT_URL),
   cleanUrl(process.env.CLIENT_URL_2),
   cleanUrl(process.env.CLIENT_URL_3),
@@ -44,37 +43,32 @@ const baseAllowedOrigins = [
   'https://www.exclusivemusics.com',
 ].filter(Boolean)
 
-const allowedOrigins = [...new Set(baseAllowedOrigins)]
-
 const vercelPreviewRegex =
   /^https:\/\/music-website-[a-z0-9-]+-azamjonovismoils-projects\.vercel\.app$/
 
-const isOriginAllowed = (origin) => {
-  if (!origin) return true
-  if (allowedOrigins.includes(origin)) return true
-  if (vercelPreviewRegex.test(origin)) return true
-  return false
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin) return callback(null, true)
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true)
+    }
+
+    if (vercelPreviewRegex.test(origin)) {
+      return callback(null, true)
+    }
+
+    return callback(new Error(`CORS blocked for origin: ${origin}`))
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
+  exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length', 'Content-Type'],
+  optionsSuccessStatus: 204,
 }
 
-const corsOptionsDelegate = (req, callback) => {
-  const requestOrigin = req.header('Origin')
-
-  if (isOriginAllowed(requestOrigin)) {
-    return callback(null, {
-      origin: true,
-      credentials: true,
-      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization', 'Range'],
-      exposedHeaders: ['Content-Range', 'Accept-Ranges', 'Content-Length', 'Content-Type'],
-      optionsSuccessStatus: 204,
-    })
-  }
-
-  return callback(new Error(`CORS blocked for origin: ${requestOrigin || 'unknown'}`))
-}
-
-app.use(cors(corsOptionsDelegate))
-app.options(/.*/, cors(corsOptionsDelegate))
+app.use(cors(corsOptions))
+app.options('*', cors(corsOptions))
 
 app.use(express.json({ limit: '50mb' }))
 app.use(express.urlencoded({ extended: true, limit: '50mb' }))
@@ -87,7 +81,6 @@ if (passport) {
 app.get('/', (req, res) => {
   res.status(200).json({
     message: 'Backend is running',
-    environment: NODE_ENV,
     storage: 'supabase',
   })
 })
@@ -96,14 +89,11 @@ app.get('/api/health', (req, res) => {
   res.status(200).json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    nodeEnv: NODE_ENV,
-    requestOrigin: req.header('Origin') || null,
-    originAllowed: isOriginAllowed(req.header('Origin')),
+    nodeEnv: process.env.NODE_ENV,
     allowedOrigins,
     googleAuth: Boolean(passport),
     storage: 'supabase',
     syncService: Boolean(process.env.SYNC_SERVICE_URL),
-    trustProxy: true,
   })
 })
 
@@ -159,7 +149,6 @@ async function startServer() {
 
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`[Server] Running on port ${PORT}`)
-      console.log('[Server] Environment:', NODE_ENV)
       console.log('[Server] Allowed origins:', allowedOrigins)
       console.log('[Server] Storage: Supabase')
       console.log('[Server] Tools router: /api/tools')
