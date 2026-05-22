@@ -80,7 +80,8 @@ const normalizeEmail = (value) => String(value || '').toLowerCase().trim()
 const normalizeName = (value) => String(value || '').trim()
 const normalizeText = (value) => String(value || '').trim()
 
-const getAdminFlag = (email) => (normalizeEmail(email) === ADMIN_EMAIL ? 1 : 0)
+const isAdminEmail = (email) => normalizeEmail(email) === ADMIN_EMAIL
+const getAdminFlag = (email) => (isAdminEmail(email) ? 1 : 0)
 
 const sendVerificationEmail = async (user) => {
   if (!user?.email) return
@@ -102,6 +103,7 @@ router.post('/register', async (req, res) => {
     const email = normalizeEmail(req.body.email)
     const password = String(req.body.password || '')
     const bio = normalizeText(req.body.bio)
+    const adminEmail = isAdminEmail(email)
 
     if (!name || !email || !password) {
       return res.status(400).json({ message: 'Name, email and password are required' })
@@ -138,14 +140,18 @@ router.post('/register', async (req, res) => {
       bio,
       isAdmin: getAdminFlag(email),
       authProvider: 'local',
-      isEmailVerified: false,
+      isEmailVerified: adminEmail,
     })
 
-    await sendVerificationEmail(user)
+    if (!adminEmail) {
+      await sendVerificationEmail(user)
+    }
 
     return res.status(201).json({
-      message: 'Account created. Verification code sent to your email.',
-      requiresVerification: true,
+      message: adminEmail
+        ? 'Account created successfully.'
+        : 'Account created. Verification code sent to your email.',
+      requiresVerification: !adminEmail,
       email: user.email,
       user: safeUser(user),
     })
@@ -170,8 +176,20 @@ router.post('/verify-email', async (req, res) => {
       return res.status(404).json({ message: 'User not found' })
     }
 
-    if (normalizeEmail(user.email) === ADMIN_EMAIL && Number(user.isAdmin) !== 1) {
+    if (isAdminEmail(user.email)) {
       user.isAdmin = 1
+      user.isEmailVerified = true
+      user.emailVerificationCode = undefined
+      user.emailVerificationExpires = undefined
+      await user.save()
+
+      const token = signToken(user)
+      setTokenCookie(res, token)
+
+      return res.json({
+        message: 'Admin email verified automatically',
+        user: safeUser(user),
+      })
     }
 
     if (user.isEmailVerified) {
@@ -234,6 +252,10 @@ router.post('/resend-verification', async (req, res) => {
       return res.status(404).json({ message: 'No account found with this email' })
     }
 
+    if (isAdminEmail(user.email)) {
+      return res.json({ message: 'Admin account does not require verification' })
+    }
+
     if (user.authProvider === 'google' && !user.password) {
       return res.status(400).json({
         message: 'This account uses Google sign-in. Please continue with Google.',
@@ -269,11 +291,6 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' })
     }
 
-    if (normalizeEmail(user.email) === ADMIN_EMAIL && Number(user.isAdmin) !== 1) {
-      user.isAdmin = 1
-      await user.save()
-    }
-
     if (user.authProvider === 'google' && !user.password) {
       return res.status(400).json({
         message: 'This account uses Google sign-in. Please continue with Google.',
@@ -284,6 +301,14 @@ router.post('/login', async (req, res) => {
     const valid = await user.comparePassword(password)
     if (!valid) {
       return res.status(401).json({ message: 'Invalid credentials' })
+    }
+
+    if (isAdminEmail(user.email)) {
+      user.isAdmin = 1
+      user.isEmailVerified = true
+      user.emailVerificationCode = undefined
+      user.emailVerificationExpires = undefined
+      await user.save()
     }
 
     if (!user.isEmailVerified) {
@@ -383,7 +408,7 @@ router.post('/reset-password', async (req, res) => {
     user.authProvider = 'local'
     user.isEmailVerified = true
 
-    if (normalizeEmail(user.email) === ADMIN_EMAIL && Number(user.isAdmin) !== 1) {
+    if (isAdminEmail(user.email)) {
       user.isAdmin = 1
     }
 
@@ -466,11 +491,14 @@ router.put('/profile', authMiddleware, async (req, res) => {
     req.user.email = nextEmail
     req.user.bio = nextBio
 
-    if (normalizeEmail(req.user.email) === ADMIN_EMAIL && Number(req.user.isAdmin) !== 1) {
+    if (isAdminEmail(req.user.email)) {
       req.user.isAdmin = 1
+      req.user.isEmailVerified = true
+      req.user.emailVerificationCode = undefined
+      req.user.emailVerificationExpires = undefined
     }
 
-    if (emailChanged && req.user.authProvider === 'local') {
+    if (emailChanged && req.user.authProvider === 'local' && !isAdminEmail(req.user.email)) {
       req.user.isEmailVerified = false
       await req.user.save()
       await sendVerificationEmail(req.user)
