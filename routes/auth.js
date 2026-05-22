@@ -18,7 +18,7 @@ const cleanUrl = (value = '') =>
     .replace(/\/+$/, '')
 
 const JWT_SECRET = String(process.env.JWT_SECRET || '').trim()
-const NODE_ENV = String(process.env.NODE_ENV || '').trim().toLowerCase()
+const NODE_ENV = String(process.env.NODE_ENV || '').trim()
 const CLIENT_URL = cleanUrl(process.env.CLIENT_URL)
 const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase()
 
@@ -32,27 +32,15 @@ try {
   console.warn('[Auth] Google passport not loaded:', e.message)
 }
 
-const isProd =
-  NODE_ENV === 'production' ||
-  String(process.env.RENDER || '').trim().toLowerCase() === 'true'
-
 const generateCode = () => String(Math.floor(100000 + Math.random() * 900000))
 const codeExpiryDate = () => new Date(Date.now() + 10 * 60 * 1000)
-
-const normalizeEmail = (value) => String(value || '').toLowerCase().trim()
-const normalizeName = (value) => String(value || '').trim()
-const normalizeText = (value) => String(value || '').trim()
-const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
-
-const isAdminEmail = (email) => normalizeEmail(email) === ADMIN_EMAIL
-const getAdminFlag = (email) => (isAdminEmail(email) ? 1 : 0)
 
 const signToken = (user) =>
   jwt.sign(
     {
       id: user._id,
       email: user.email,
-      isAdmin: Number(user.isAdmin) === 1 ? 1 : 0,
+      isAdmin: user.isAdmin,
     },
     JWT_SECRET,
     { expiresIn: '7d' }
@@ -60,10 +48,9 @@ const signToken = (user) =>
 
 const cookieOptions = {
   httpOnly: true,
-  secure: isProd,
-  sameSite: isProd ? 'none' : 'lax',
+  secure: NODE_ENV === 'production',
+  sameSite: NODE_ENV === 'production' ? 'none' : 'lax',
   maxAge: 7 * 24 * 60 * 60 * 1000,
-  path: '/',
 }
 
 const setTokenCookie = (res, token) => {
@@ -73,9 +60,8 @@ const setTokenCookie = (res, token) => {
 const clearTokenCookie = (res) => {
   res.clearCookie(COOKIE_NAME, {
     httpOnly: true,
-    secure: isProd,
-    sameSite: isProd ? 'none' : 'lax',
-    path: '/',
+    secure: NODE_ENV === 'production',
+    sameSite: NODE_ENV === 'production' ? 'none' : 'lax',
   })
 }
 
@@ -85,10 +71,17 @@ const safeUser = (user) => ({
   email: user.email,
   bio: user.bio,
   avatar: user.avatar,
-  isAdmin: Number(user.isAdmin) === 1 ? 1 : 0,
+  isAdmin: user.isAdmin,
   authProvider: user.authProvider,
   isEmailVerified: !!user.isEmailVerified,
 })
+
+const normalizeEmail = (value) => String(value || '').toLowerCase().trim()
+const normalizeName = (value) => String(value || '').trim()
+const normalizeText = (value) => String(value || '').trim()
+
+const isAdminEmail = (email) => normalizeEmail(email) === ADMIN_EMAIL
+const getAdminFlag = (email) => (isAdminEmail(email) ? 1 : 0)
 
 const sendVerificationEmail = async (user) => {
   if (!user?.email) return
@@ -118,10 +111,6 @@ router.post('/register', async (req, res) => {
 
     if (name.length < 2) {
       return res.status(400).json({ message: 'Name must be at least 2 characters' })
-    }
-
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ message: 'Enter a valid email address' })
     }
 
     if (password.length < 6) {
@@ -181,23 +170,14 @@ router.post('/verify-email', async (req, res) => {
       return res.status(400).json({ message: 'Email and verification code are required' })
     }
 
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ message: 'Enter a valid email address' })
-    }
-
-    if (!/^\d{6}$/.test(code)) {
-      return res.status(400).json({ message: 'Enter a valid 6-digit verification code' })
-    }
-
     const user = await User.findOne({ email }).select('+password')
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' })
     }
 
-    user.isAdmin = getAdminFlag(user.email)
-
-    if (Number(user.isAdmin) === 1) {
+    if (isAdminEmail(user.email)) {
+      user.isAdmin = 1
       user.isEmailVerified = true
       user.emailVerificationCode = undefined
       user.emailVerificationExpires = undefined
@@ -213,6 +193,7 @@ router.post('/verify-email', async (req, res) => {
     }
 
     if (user.isEmailVerified) {
+      await user.save()
       const token = signToken(user)
       setTokenCookie(res, token)
 
@@ -265,11 +246,7 @@ router.post('/resend-verification', async (req, res) => {
       return res.status(400).json({ message: 'Email is required' })
     }
 
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ message: 'Enter a valid email address' })
-    }
-
-    const user = await User.findOne({ email }).select('+password')
+    const user = await User.findOne({ email })
 
     if (!user) {
       return res.status(404).json({ message: 'No account found with this email' })
@@ -308,10 +285,6 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ message: 'Email and password are required' })
     }
 
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ message: 'Enter a valid email address' })
-    }
-
     const user = await User.findOne({ email }).select('+password')
 
     if (!user) {
@@ -326,14 +299,12 @@ router.post('/login', async (req, res) => {
     }
 
     const valid = await user.comparePassword(password)
-
     if (!valid) {
       return res.status(401).json({ message: 'Invalid credentials' })
     }
 
-    user.isAdmin = getAdminFlag(user.email)
-
-    if (Number(user.isAdmin) === 1) {
+    if (isAdminEmail(user.email)) {
+      user.isAdmin = 1
       user.isEmailVerified = true
       user.emailVerificationCode = undefined
       user.emailVerificationExpires = undefined
@@ -370,11 +341,7 @@ router.post('/forgot-password', async (req, res) => {
       return res.status(400).json({ message: 'Email is required' })
     }
 
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ message: 'Enter a valid email address' })
-    }
-
-    const user = await User.findOne({ email }).select('+password')
+    const user = await User.findOne({ email })
 
     if (!user) {
       return res.status(404).json({ message: 'No account found with this email' })
@@ -417,14 +384,6 @@ router.post('/reset-password', async (req, res) => {
       return res.status(400).json({ message: 'All fields are required' })
     }
 
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ message: 'Enter a valid email address' })
-    }
-
-    if (!/^\d{6}$/.test(code)) {
-      return res.status(400).json({ message: 'Enter a valid 6-digit reset code' })
-    }
-
     if (newPassword.length < 6) {
       return res.status(400).json({ message: 'Password must be at least 6 characters' })
     }
@@ -448,7 +407,10 @@ router.post('/reset-password', async (req, res) => {
     user.passwordResetExpires = undefined
     user.authProvider = 'local'
     user.isEmailVerified = true
-    user.isAdmin = getAdminFlag(user.email)
+
+    if (isAdminEmail(user.email)) {
+      user.isAdmin = 1
+    }
 
     await user.save()
 
@@ -477,11 +439,8 @@ if (passport) {
       failureRedirect: `${CLIENT_URL}/#/login?error=google_failed`,
       session: false,
     }),
-    async (req, res) => {
+    (req, res) => {
       try {
-        req.user.isAdmin = getAdminFlag(req.user.email)
-        await req.user.save()
-
         const token = signToken(req.user)
         setTokenCookie(res, token)
 
@@ -495,11 +454,11 @@ if (passport) {
   )
 } else {
   router.get('/google', (req, res) => {
-    return res.redirect(`${CLIENT_URL}/#/login?error=google_not_configured`)
+    res.status(503).json({ message: 'Google login is not configured' })
   })
 
   router.get('/google/callback', (req, res) => {
-    return res.redirect(`${CLIENT_URL}/#/login?error=google_not_configured`)
+    res.redirect(`${CLIENT_URL}/#/login?error=google_not_configured`)
   })
 }
 
@@ -517,14 +476,6 @@ router.put('/profile', authMiddleware, async (req, res) => {
       return res.status(400).json({ message: 'Name and email are required' })
     }
 
-    if (nextName.length < 2) {
-      return res.status(400).json({ message: 'Name must be at least 2 characters' })
-    }
-
-    if (!isValidEmail(nextEmail)) {
-      return res.status(400).json({ message: 'Enter a valid email address' })
-    }
-
     const emailOwner = await User.findOne({
       email: nextEmail,
       _id: { $ne: req.user._id },
@@ -535,20 +486,19 @@ router.put('/profile', authMiddleware, async (req, res) => {
     }
 
     const emailChanged = nextEmail !== req.user.email
-    const nextIsAdmin = getAdminFlag(nextEmail)
 
     req.user.name = nextName
     req.user.email = nextEmail
     req.user.bio = nextBio
-    req.user.isAdmin = nextIsAdmin
 
-    if (nextIsAdmin === 1) {
+    if (isAdminEmail(req.user.email)) {
+      req.user.isAdmin = 1
       req.user.isEmailVerified = true
       req.user.emailVerificationCode = undefined
       req.user.emailVerificationExpires = undefined
     }
 
-    if (emailChanged && req.user.authProvider === 'local' && nextIsAdmin !== 1) {
+    if (emailChanged && req.user.authProvider === 'local' && !isAdminEmail(req.user.email)) {
       req.user.isEmailVerified = false
       await req.user.save()
       await sendVerificationEmail(req.user)
