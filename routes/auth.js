@@ -83,17 +83,33 @@ const safeUser = (user) => ({
   isEmailVerified: !!user.isEmailVerified,
 })
 
-const sendVerificationEmail = async (user) => {
-  if (!user?.email) return
-
+const assignVerificationCode = async (user) => {
   const code = generateCode()
   user.emailVerificationCode = code
   user.emailVerificationExpires = codeExpiryDate()
   await user.save()
+  return code
+}
 
+const deliverVerificationEmail = async (user, code) => {
   await sendEmail({
     to: user.email,
     ...verificationTemplate(user.name, code),
+  })
+}
+
+const assignResetCode = async (user) => {
+  const code = generateCode()
+  user.passwordResetCode = code
+  user.passwordResetExpires = codeExpiryDate()
+  await user.save()
+  return code
+}
+
+const deliverResetEmail = async (user, code) => {
+  await sendEmail({
+    to: user.email,
+    ...resetPasswordTemplate(user.name, code),
   })
 }
 
@@ -144,17 +160,17 @@ router.post('/register', async (req, res) => {
     })
 
     if (!adminEmail) {
-      try {
-        await sendVerificationEmail(user)
-      } catch (mailErr) {
+      const code = await assignVerificationCode(user)
+
+      deliverVerificationEmail(user, code).catch((mailErr) => {
         console.warn('[Register] Verification email failed:', mailErr.message)
-      }
+      })
     }
 
     return res.status(201).json({
       message: adminEmail
         ? 'Account created successfully.'
-        : 'Account created. Verification code sent to your email.',
+        : 'Account created. If the email is reachable, a verification code will arrive shortly.',
       requiresVerification: !adminEmail,
       email: user.email,
       user: safeUser(user),
@@ -197,7 +213,6 @@ router.post('/verify-email', async (req, res) => {
     }
 
     if (user.isEmailVerified) {
-      await user.save()
       const token = signToken(user)
       setTokenCookie(res, token)
 
@@ -220,14 +235,13 @@ router.post('/verify-email', async (req, res) => {
     user.emailVerificationExpires = undefined
     await user.save()
 
-    try {
-      await sendEmail({
+    welcomeTemplate &&
+      sendEmail({
         to: user.email,
         ...welcomeTemplate(user.name),
+      }).catch((mailErr) => {
+        console.warn('[VerifyEmail] Welcome email failed:', mailErr.message)
       })
-    } catch (mailErr) {
-      console.warn('[VerifyEmail] Welcome email failed:', mailErr.message)
-    }
 
     const token = signToken(user)
     setTokenCookie(res, token)
@@ -253,27 +267,38 @@ router.post('/resend-verification', async (req, res) => {
     const user = await User.findOne({ email })
 
     if (!user) {
-      return res.status(404).json({ message: 'No account found with this email' })
+      return res.json({
+        message: 'If an account exists and still needs verification, a new code will arrive shortly.',
+      })
     }
 
     if (isAdminEmail(user.email)) {
-      return res.json({ message: 'Admin account does not require verification' })
+      return res.json({
+        message: 'If an account exists and still needs verification, a new code will arrive shortly.',
+      })
     }
 
     if (user.authProvider === 'google' && !user.password) {
-      return res.status(400).json({
-        message: 'This account uses Google sign-in. Please continue with Google.',
-        code: 'GOOGLE_ACCOUNT',
+      return res.json({
+        message: 'If an account exists and still needs verification, a new code will arrive shortly.',
       })
     }
 
     if (user.isEmailVerified) {
-      return res.status(400).json({ message: 'Email is already verified' })
+      return res.json({
+        message: 'If an account exists and still needs verification, a new code will arrive shortly.',
+      })
     }
 
-    await sendVerificationEmail(user)
+    const code = await assignVerificationCode(user)
 
-    return res.json({ message: 'Verification code sent again' })
+    deliverVerificationEmail(user, code).catch((mailErr) => {
+      console.warn('[ResendVerification] Verification email failed:', mailErr.message)
+    })
+
+    return res.json({
+      message: 'If an account exists and still needs verification, a new code will arrive shortly.',
+    })
   } catch (err) {
     console.error('[ResendVerification]', err)
     return res.status(500).json({ message: err.message || 'Server error' })
@@ -348,28 +373,25 @@ router.post('/forgot-password', async (req, res) => {
     const user = await User.findOne({ email })
 
     if (!user) {
-      return res.status(404).json({ message: 'No account found with this email' })
-    }
-
-    if (user.authProvider === 'google' && !user.password) {
-      return res.status(400).json({
-        message: 'This account uses Google sign-in. Please continue with Google.',
-        code: 'GOOGLE_ACCOUNT',
+      return res.json({
+        message: 'If the email is registered, a reset code will arrive shortly.',
       })
     }
 
-    const code = generateCode()
-    user.passwordResetCode = code
-    user.passwordResetExpires = codeExpiryDate()
-    await user.save()
+    if (user.authProvider === 'google' && !user.password) {
+      return res.json({
+        message: 'If the email is registered, a reset code will arrive shortly.',
+      })
+    }
 
-    await sendEmail({
-      to: user.email,
-      ...resetPasswordTemplate(user.name, code),
+    const code = await assignResetCode(user)
+
+    deliverResetEmail(user, code).catch((mailErr) => {
+      console.warn('[ForgotPassword] Reset email failed:', mailErr.message)
     })
 
     return res.json({
-      message: 'Reset code sent to your email',
+      message: 'If the email is registered, a reset code will arrive shortly.',
       email: user.email,
     })
   } catch (err) {
@@ -504,13 +526,16 @@ router.put('/profile', authMiddleware, async (req, res) => {
 
     if (emailChanged && req.user.authProvider === 'local' && !isAdminEmail(req.user.email)) {
       req.user.isEmailVerified = false
-      await req.user.save()
-      await sendVerificationEmail(req.user)
+      const code = await assignVerificationCode(req.user)
 
       clearTokenCookie(res)
 
+      deliverVerificationEmail(req.user, code).catch((mailErr) => {
+        console.warn('[UpdateProfile] Verification email failed:', mailErr.message)
+      })
+
       return res.json({
-        message: 'Profile updated. Please verify your new email.',
+        message: 'Profile updated. Verify your new email with the code being sent.',
         requiresVerification: true,
         email: req.user.email,
         user: safeUser(req.user),
