@@ -18,7 +18,7 @@ const cleanUrl = (value = '') =>
     .replace(/\/+$/, '')
 
 const JWT_SECRET = String(process.env.JWT_SECRET || '').trim()
-const NODE_ENV = String(process.env.NODE_ENV || '').trim()
+const NODE_ENV = String(process.env.NODE_ENV || '').trim().toLowerCase()
 const CLIENT_URL = cleanUrl(process.env.CLIENT_URL)
 const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase()
 
@@ -31,6 +31,10 @@ try {
 } catch (e) {
   console.warn('[Auth] Google passport not loaded:', e.message)
 }
+
+const isProd =
+  NODE_ENV === 'production' ||
+  String(process.env.RENDER || '').trim().toLowerCase() === 'true'
 
 const generateCode = () => String(Math.floor(100000 + Math.random() * 900000))
 const codeExpiryDate = () => new Date(Date.now() + 10 * 60 * 1000)
@@ -48,7 +52,7 @@ const signToken = (user) =>
     {
       id: user._id,
       email: user.email,
-      isAdmin: user.isAdmin,
+      isAdmin: Number(user.isAdmin) === 1 ? 1 : 0,
     },
     JWT_SECRET,
     { expiresIn: '7d' }
@@ -56,9 +60,10 @@ const signToken = (user) =>
 
 const cookieOptions = {
   httpOnly: true,
-  secure: NODE_ENV === 'production',
-  sameSite: NODE_ENV === 'production' ? 'none' : 'lax',
+  secure: isProd,
+  sameSite: isProd ? 'none' : 'lax',
   maxAge: 7 * 24 * 60 * 60 * 1000,
+  path: '/',
 }
 
 const setTokenCookie = (res, token) => {
@@ -68,8 +73,9 @@ const setTokenCookie = (res, token) => {
 const clearTokenCookie = (res) => {
   res.clearCookie(COOKIE_NAME, {
     httpOnly: true,
-    secure: NODE_ENV === 'production',
-    sameSite: NODE_ENV === 'production' ? 'none' : 'lax',
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax',
+    path: '/',
   })
 }
 
@@ -189,8 +195,9 @@ router.post('/verify-email', async (req, res) => {
       return res.status(404).json({ message: 'User not found' })
     }
 
-    if (isAdminEmail(user.email)) {
-      user.isAdmin = 1
+    user.isAdmin = getAdminFlag(user.email)
+
+    if (Number(user.isAdmin) === 1) {
       user.isEmailVerified = true
       user.emailVerificationCode = undefined
       user.emailVerificationExpires = undefined
@@ -262,7 +269,7 @@ router.post('/resend-verification', async (req, res) => {
       return res.status(400).json({ message: 'Enter a valid email address' })
     }
 
-    const user = await User.findOne({ email })
+    const user = await User.findOne({ email }).select('+password')
 
     if (!user) {
       return res.status(404).json({ message: 'No account found with this email' })
@@ -367,7 +374,7 @@ router.post('/forgot-password', async (req, res) => {
       return res.status(400).json({ message: 'Enter a valid email address' })
     }
 
-    const user = await User.findOne({ email })
+    const user = await User.findOne({ email }).select('+password')
 
     if (!user) {
       return res.status(404).json({ message: 'No account found with this email' })
@@ -470,9 +477,10 @@ if (passport) {
       failureRedirect: `${CLIENT_URL}/#/login?error=google_failed`,
       session: false,
     }),
-    (req, res) => {
+    async (req, res) => {
       try {
         req.user.isAdmin = getAdminFlag(req.user.email)
+        await req.user.save()
 
         const token = signToken(req.user)
         setTokenCookie(res, token)
