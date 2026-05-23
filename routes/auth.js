@@ -1,12 +1,6 @@
 const express = require('express')
 const jwt = require('jsonwebtoken')
 const User = require('../models/User')
-const { sendEmail } = require('../utils/sendEmail')
-const {
-  verificationTemplate,
-  resetPasswordTemplate,
-  welcomeTemplate,
-} = require('../utils/emailTemplates')
 const { authMiddleware, COOKIE_NAME } = require('../middleware/auth')
 
 const router = express.Router()
@@ -31,9 +25,6 @@ try {
 } catch (e) {
   console.warn('[Auth] Google passport not loaded:', e.message)
 }
-
-const generateCode = () => String(Math.floor(100000 + Math.random() * 900000))
-const codeExpiryDate = () => new Date(Date.now() + 10 * 60 * 1000)
 
 const normalizeEmail = (value) => String(value || '').toLowerCase().trim()
 const normalizeName = (value) => String(value || '').trim()
@@ -81,38 +72,8 @@ const safeUser = (user) => ({
   avatar: user.avatar,
   isAdmin: Number(user.isAdmin) === 1 ? 1 : 0,
   authProvider: user.authProvider,
-  isEmailVerified: !!user.isEmailVerified,
+  isEmailVerified: true,
 })
-
-const assignVerificationCode = async (user) => {
-  const code = generateCode()
-  user.emailVerificationCode = code
-  user.emailVerificationExpires = codeExpiryDate()
-  await user.save()
-  return code
-}
-
-const assignResetCode = async (user) => {
-  const code = generateCode()
-  user.passwordResetCode = code
-  user.passwordResetExpires = codeExpiryDate()
-  await user.save()
-  return code
-}
-
-const deliverVerificationEmail = async (user, code) => {
-  await sendEmail({
-    to: user.email,
-    ...verificationTemplate(user.name, code),
-  })
-}
-
-const deliverResetEmail = async (user, code) => {
-  await sendEmail({
-    to: user.email,
-    ...resetPasswordTemplate(user.name, code),
-  })
-}
 
 router.post('/register', async (req, res) => {
   try {
@@ -120,7 +81,6 @@ router.post('/register', async (req, res) => {
     const email = normalizeEmail(req.body.email)
     const password = String(req.body.password || '')
     const bio = normalizeText(req.body.bio)
-    const adminEmail = isAdminEmail(email)
 
     if (!name || !email || !password) {
       return res.status(400).json({ message: 'Name, email and password are required' })
@@ -161,152 +121,18 @@ router.post('/register', async (req, res) => {
       bio,
       isAdmin: getAdminFlag(email),
       authProvider: 'local',
-      isEmailVerified: adminEmail,
-    })
-
-    if (!adminEmail) {
-      const code = await assignVerificationCode(user)
-
-      deliverVerificationEmail(user, code).catch((mailErr) => {
-        console.warn('[Register] Verification email failed:', mailErr.message)
-      })
-    }
-
-    return res.status(201).json({
-      message: adminEmail
-        ? 'Account created successfully.'
-        : 'Account created. If the email is reachable, a verification code will arrive shortly.',
-      requiresVerification: !adminEmail,
-      email: user.email,
-      user: safeUser(user),
-    })
-  } catch (err) {
-    console.error('[Register]', err)
-    return res.status(500).json({ message: err.message || 'Server error' })
-  }
-})
-
-router.post('/verify-email', async (req, res) => {
-  try {
-    const email = normalizeEmail(req.body.email)
-    const code = normalizeText(req.body.code)
-
-    if (!email || !code) {
-      return res.status(400).json({ message: 'Email and verification code are required' })
-    }
-
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ message: 'Enter a valid email address' })
-    }
-
-    const user = await User.findOne({ email }).select('+password')
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' })
-    }
-
-    if (isAdminEmail(user.email)) {
-      user.isAdmin = 1
-      user.isEmailVerified = true
-      user.emailVerificationCode = undefined
-      user.emailVerificationExpires = undefined
-      await user.save()
-
-      const token = signToken(user)
-      setTokenCookie(res, token)
-
-      return res.json({
-        message: 'Admin email verified automatically',
-        user: safeUser(user),
-      })
-    }
-
-    if (user.isEmailVerified) {
-      const token = signToken(user)
-      setTokenCookie(res, token)
-
-      return res.json({
-        message: 'Email already verified',
-        user: safeUser(user),
-      })
-    }
-
-    if (!user.emailVerificationCode || user.emailVerificationCode !== code) {
-      return res.status(400).json({ message: 'Invalid verification code' })
-    }
-
-    if (!user.emailVerificationExpires || new Date() > new Date(user.emailVerificationExpires)) {
-      return res.status(400).json({ message: 'Verification code expired' })
-    }
-
-    user.isEmailVerified = true
-    user.emailVerificationCode = undefined
-    user.emailVerificationExpires = undefined
-    await user.save()
-
-    sendEmail({
-      to: user.email,
-      ...welcomeTemplate(user.name),
-    }).catch((mailErr) => {
-      console.warn('[VerifyEmail] Welcome email failed:', mailErr.message)
+      isEmailVerified: true,
     })
 
     const token = signToken(user)
     setTokenCookie(res, token)
 
-    return res.json({
-      message: 'Email verified successfully',
+    return res.status(201).json({
+      message: 'Account created successfully',
       user: safeUser(user),
     })
   } catch (err) {
-    console.error('[VerifyEmail]', err)
-    return res.status(500).json({ message: err.message || 'Server error' })
-  }
-})
-
-router.post('/resend-verification', async (req, res) => {
-  try {
-    const email = normalizeEmail(req.body.email)
-
-    if (!email) {
-      return res.status(400).json({ message: 'Email is required' })
-    }
-
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ message: 'Enter a valid email address' })
-    }
-
-    const user = await User.findOne({ email })
-
-    if (!user) {
-      return res.json({
-        message: 'If an account exists and still needs verification, a new code will arrive shortly.',
-      })
-    }
-
-    if (isAdminEmail(user.email) || user.isEmailVerified) {
-      return res.json({
-        message: 'If an account exists and still needs verification, a new code will arrive shortly.',
-      })
-    }
-
-    if (user.authProvider === 'google' && !user.password) {
-      return res.json({
-        message: 'If an account exists and still needs verification, a new code will arrive shortly.',
-      })
-    }
-
-    const code = await assignVerificationCode(user)
-
-    deliverVerificationEmail(user, code).catch((mailErr) => {
-      console.warn('[ResendVerification] Verification email failed:', mailErr.message)
-    })
-
-    return res.json({
-      message: 'If an account exists and still needs verification, a new code will arrive shortly.',
-    })
-  } catch (err) {
-    console.error('[ResendVerification]', err)
+    console.error('[Register]', err)
     return res.status(500).json({ message: err.message || 'Server error' })
   }
 })
@@ -318,6 +144,10 @@ router.post('/login', async (req, res) => {
 
     if (!email || !password) {
       return res.status(400).json({ message: 'Email and password are required' })
+    }
+
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ message: 'Enter a valid email address' })
     }
 
     const user = await User.findOne({ email }).select('+password')
@@ -339,22 +169,9 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid credentials' })
     }
 
-    if (isAdminEmail(user.email)) {
-      user.isAdmin = 1
-      user.isEmailVerified = true
-      user.emailVerificationCode = undefined
-      user.emailVerificationExpires = undefined
-      await user.save()
-    }
-
-    if (!user.isEmailVerified) {
-      return res.status(403).json({
-        message: 'Please verify your email before signing in',
-        code: 'EMAIL_NOT_VERIFIED',
-        requiresVerification: true,
-        email: user.email,
-      })
-    }
+    user.isAdmin = getAdminFlag(user.email)
+    user.isEmailVerified = true
+    await user.save()
 
     const token = signToken(user)
     setTokenCookie(res, token)
@@ -365,88 +182,6 @@ router.post('/login', async (req, res) => {
     })
   } catch (err) {
     console.error('[Login]', err)
-    return res.status(500).json({ message: err.message || 'Server error' })
-  }
-})
-
-router.post('/forgot-password', async (req, res) => {
-  try {
-    const email = normalizeEmail(req.body.email)
-
-    if (!email) {
-      return res.status(400).json({ message: 'Email is required' })
-    }
-
-    if (!isValidEmail(email)) {
-      return res.status(400).json({ message: 'Enter a valid email address' })
-    }
-
-    const user = await User.findOne({ email })
-
-    if (!user || (user.authProvider === 'google' && !user.password)) {
-      return res.json({
-        message: 'If the email is registered, a reset code will arrive shortly.',
-      })
-    }
-
-    const code = await assignResetCode(user)
-
-    deliverResetEmail(user, code).catch((mailErr) => {
-      console.warn('[ForgotPassword] Reset email failed:', mailErr.message)
-    })
-
-    return res.json({
-      message: 'If the email is registered, a reset code will arrive shortly.',
-      email: user.email,
-    })
-  } catch (err) {
-    console.error('[ForgotPassword]', err)
-    return res.status(500).json({ message: err.message || 'Server error' })
-  }
-})
-
-router.post('/reset-password', async (req, res) => {
-  try {
-    const email = normalizeEmail(req.body.email)
-    const code = normalizeText(req.body.code)
-    const newPassword = String(req.body.newPassword || '')
-
-    if (!email || !code || !newPassword) {
-      return res.status(400).json({ message: 'All fields are required' })
-    }
-
-    if (newPassword.length < 6) {
-      return res.status(400).json({ message: 'Password must be at least 6 characters' })
-    }
-
-    const user = await User.findOne({ email }).select('+password')
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' })
-    }
-
-    if (!user.passwordResetCode || user.passwordResetCode !== code) {
-      return res.status(400).json({ message: 'Invalid reset code' })
-    }
-
-    if (!user.passwordResetExpires || new Date() > new Date(user.passwordResetExpires)) {
-      return res.status(400).json({ message: 'Reset code expired' })
-    }
-
-    user.password = newPassword
-    user.passwordResetCode = undefined
-    user.passwordResetExpires = undefined
-    user.authProvider = 'local'
-    user.isEmailVerified = true
-    user.isAdmin = getAdminFlag(user.email)
-
-    await user.save()
-
-    return res.json({
-      message: 'Password reset successfully. You can now sign in.',
-    })
-  } catch (err) {
-    console.error('[ResetPassword]', err)
     return res.status(500).json({ message: err.message || 'Server error' })
   }
 })
@@ -517,36 +252,11 @@ router.put('/profile', authMiddleware, async (req, res) => {
       return res.status(409).json({ message: 'Email already in use' })
     }
 
-    const emailChanged = nextEmail !== req.user.email
-
     req.user.name = nextName
     req.user.email = nextEmail
     req.user.bio = nextBio
-
-    if (isAdminEmail(req.user.email)) {
-      req.user.isAdmin = 1
-      req.user.isEmailVerified = true
-      req.user.emailVerificationCode = undefined
-      req.user.emailVerificationExpires = undefined
-    }
-
-    if (emailChanged && req.user.authProvider === 'local' && !isAdminEmail(req.user.email)) {
-      req.user.isEmailVerified = false
-      const code = await assignVerificationCode(req.user)
-
-      clearTokenCookie(res)
-
-      deliverVerificationEmail(req.user, code).catch((mailErr) => {
-        console.warn('[UpdateProfile] Verification email failed:', mailErr.message)
-      })
-
-      return res.json({
-        message: 'Profile updated. If the email is reachable, a verification code will arrive shortly.',
-        requiresVerification: true,
-        email: req.user.email,
-        user: safeUser(req.user),
-      })
-    }
+    req.user.isAdmin = getAdminFlag(nextEmail)
+    req.user.isEmailVerified = true
 
     await req.user.save()
 

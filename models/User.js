@@ -79,7 +79,6 @@ const userSchema = new mongoose.Schema(
       enum: [0, 1],
       default: 0,
     },
-
     authProvider: {
       type: String,
       enum: ['local', 'google'],
@@ -92,53 +91,30 @@ const userSchema = new mongoose.Schema(
       unique: true,
       sparse: true,
     },
-
     isEmailVerified: {
       type: Boolean,
-      default: false,
+      default: true,
     },
-    emailVerificationCode: {
-      type: String,
-      default: undefined,
-    },
-    emailVerificationExpires: {
-      type: Date,
-      default: undefined,
-    },
-
-    passwordResetCode: {
-      type: String,
-      default: undefined,
-    },
-    passwordResetExpires: {
-      type: Date,
-      default: undefined,
-    },
-
     favourites: [
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Music',
       },
     ],
-
     downloaded: [
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'Music',
       },
     ],
-
     recentlyPlayed: {
       type: [recentlyPlayedSchema],
       default: [],
     },
-
     continueListening: {
       type: [continueListeningSchema],
       default: [],
     },
-
     preferences: {
       volume: {
         type: Number,

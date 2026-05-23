@@ -5,7 +5,6 @@ const mongoose = require('mongoose')
 const cors = require('cors')
 const cookieParser = require('cookie-parser')
 const multer = require('multer')
-const { verifyMailConnection } = require('./utils/sendEmail')
 
 const authRouter = require('./routes/auth')
 const musicRouter = require('./routes/music')
@@ -140,12 +139,6 @@ async function startServer() {
 
     await mongoose.connect(process.env.MONGODB_URI)
     console.log('[DB] MongoDB connected')
-
-    try {
-      await verifyMailConnection()
-    } catch (e) {
-      console.warn('[Mail] Non-fatal:', e.message)
-    }
 
     app.listen(PORT, '0.0.0.0', () => {
       console.log(`[Server] Running on port ${PORT}`)

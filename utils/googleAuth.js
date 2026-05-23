@@ -53,7 +53,7 @@ if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_CALLBACK_URL) {
           if (!user.googleId) user.googleId = googleId
           if (!user.name && name) user.name = name
 
-          user.authProvider = 'google'
+          user.authProvider = user.authProvider || 'google'
           user.isEmailVerified = true
 
           if (email === ADMIN_EMAIL && Number(user.isAdmin) !== 1) {
