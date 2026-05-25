@@ -28,6 +28,11 @@ if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_CALLBACK_URL) {
           const email = profile.emails?.[0]?.value?.toLowerCase().trim()
           const googleId = String(profile.id || '').trim()
           const name = String(profile.displayName || 'Google User').trim()
+          const avatar = String(
+            profile.photos?.[0]?.value ||
+            profile._json?.picture ||
+            ''
+          ).trim()
 
           if (!email) {
             return done(new Error('Google account email not found'), null)
@@ -41,6 +46,7 @@ if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_CALLBACK_URL) {
               email,
               password: '',
               bio: '',
+              avatar,
               isAdmin: email === ADMIN_EMAIL ? 1 : 0,
               authProvider: 'google',
               googleId,
@@ -52,8 +58,9 @@ if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET || !GOOGLE_CALLBACK_URL) {
 
           if (!user.googleId) user.googleId = googleId
           if (!user.name && name) user.name = name
+          if (!user.avatar && avatar) user.avatar = avatar
 
-          user.authProvider = user.authProvider || 'google'
+          user.authProvider = 'google'
           user.isEmailVerified = true
 
           if (email === ADMIN_EMAIL && Number(user.isAdmin) !== 1) {

@@ -29,6 +29,7 @@ try {
 const normalizeEmail = (value) => String(value || '').toLowerCase().trim()
 const normalizeName = (value) => String(value || '').trim()
 const normalizeText = (value) => String(value || '').trim()
+const normalizeUrl = (value) => String(value || '').trim()
 const isValidEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim())
 
 const isAdminEmail = (email) => normalizeEmail(email) === ADMIN_EMAIL
@@ -66,13 +67,22 @@ const clearTokenCookie = (res) => {
 
 const safeUser = (user) => ({
   id: user._id,
-  name: user.name,
-  email: user.email,
-  bio: user.bio,
-  avatar: user.avatar,
+  _id: user._id,
+  name: user.name || '',
+  email: user.email || '',
+  bio: user.bio || '',
+  avatar: user.avatar || '',
   isAdmin: Number(user.isAdmin) === 1 ? 1 : 0,
-  authProvider: user.authProvider,
-  isEmailVerified: true,
+  authProvider: user.authProvider || 'local',
+  provider: user.authProvider || 'local',
+  isEmailVerified: user.isEmailVerified !== false,
+  createdAt: user.createdAt,
+  updatedAt: user.updatedAt,
+  preferences: {
+    theme: user.preferences?.theme || 'dark',
+    autoplay: typeof user.preferences?.autoplay === 'boolean' ? user.preferences.autoplay : true,
+    volume: typeof user.preferences?.volume === 'number' ? user.preferences.volume : 0.7,
+  },
 })
 
 router.post('/register', async (req, res) => {
@@ -202,8 +212,15 @@ if (passport) {
       failureRedirect: `${CLIENT_URL}/#/login?error=google_failed`,
       session: false,
     }),
-    (req, res) => {
+    async (req, res) => {
       try {
+        if (!req.user) {
+          return res.redirect(`${CLIENT_URL}/#/login?error=google_failed`)
+        }
+
+        req.user.isAdmin = getAdminFlag(req.user.email)
+        await req.user.save()
+
         const token = signToken(req.user)
         setTokenCookie(res, token)
 
@@ -234,6 +251,7 @@ router.put('/profile', authMiddleware, async (req, res) => {
     const nextName = normalizeName(req.body.name)
     const nextEmail = normalizeEmail(req.body.email)
     const nextBio = normalizeText(req.body.bio)
+    const nextAvatar = normalizeUrl(req.body.avatar)
 
     if (!nextName || !nextEmail) {
       return res.status(400).json({ message: 'Name and email are required' })
@@ -257,6 +275,10 @@ router.put('/profile', authMiddleware, async (req, res) => {
     req.user.bio = nextBio
     req.user.isAdmin = getAdminFlag(nextEmail)
     req.user.isEmailVerified = true
+
+    if (nextAvatar) {
+      req.user.avatar = nextAvatar
+    }
 
     await req.user.save()
 
